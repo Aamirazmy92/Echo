@@ -1,0 +1,9 @@
+node_modules/
+out/
+dist/
+.vite/
+.vscode/
+app.log
+*.db
+*.db-shm
+*.db-wal

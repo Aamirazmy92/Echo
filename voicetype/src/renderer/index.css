@@ -1,0 +1,473 @@
+@import "@fontsource/figtree/400.css";
+@import "@fontsource/figtree/500.css";
+@import "@fontsource/figtree/600.css";
+@import "@fontsource/figtree/700.css";
+@import "@fontsource/playfair-display/400.css";
+@import "@fontsource/playfair-display/500.css";
+@import "@fontsource/playfair-display/600.css";
+@import "@fontsource/playfair-display/700.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Animations (CSS-first, compositor-friendly) ───
+   We prefer CSS transitions/keyframes over JS animation libs for modals,
+   menus, and hover states. This avoids framer-motion first-mount cold
+   starts and keeps interactions feeling instant.                        */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.94); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes modalSpringIn {
+  0% { opacity: 0; transform: translateY(14px) scale(0.94); }
+  68% { opacity: 1; transform: translateY(-1px) scale(1.012); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes modalSnapOut {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(6px) scale(0.97); }
+}
+
+@keyframes textGradient {
+  to { background-position: 200% center; }
+}
+
+@layer utilities {
+  .animate-text-gradient {
+    animation: textGradient 3s linear infinite;
+  }
+  .animate-pop-in {
+    animation: popIn 140ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .animate-fade-in {
+    animation: fadeIn 140ms ease-out;
+  }
+  .dialog-shell {
+    transition-property: opacity !important;
+    transition-duration: 160ms !important;
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1) !important;
+  }
+  .dialog-panel {
+    transition-duration: 220ms !important;
+  }
+  .dialog-panel-default {
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1) !important;
+  }
+  .dialog-panel-pop {
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1) !important;
+  }
+  .segmented-thumb {
+    will-change: transform;
+    transition-property: transform, box-shadow !important;
+    transition-duration: 280ms !important;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1) !important;
+  }
+  .segmented-label {
+    transition-property: color, opacity !important;
+    transition-duration: 220ms !important;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1) !important;
+  }
+  .settings-parent-panel-subdued {
+    border-color: transparent !important;
+    box-shadow: 0 18px 44px -26px rgba(15, 23, 42, 0.18) !important;
+  }
+  .settings-hotkey-chip {
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(250, 251, 253, 0.98) 100%);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.9) inset,
+      0 1px 2px rgba(15, 23, 42, 0.08),
+      0 3px 6px -4px rgba(15, 23, 42, 0.18);
+  }
+  .settings-action-button {
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    transform: translateZ(0);
+    transition-property: transform, background-color, border-color, box-shadow, color, opacity;
+    transition-duration: 180ms;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .settings-action-button:hover {
+    border-color: rgba(15, 23, 42, 0.14);
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 10px 22px -18px rgba(15, 23, 42, 0.28);
+  }
+  .settings-modal-panel .btn-primary,
+  .settings-modal-panel .btn-secondary,
+  .static-click-buttons .btn-primary,
+  .static-click-buttons .btn-secondary {
+    transition-property: transform, opacity, background-color, border-color, color, box-shadow !important;
+  }
+}
+
+@layer base {
+  :root {
+    /* ─── Core surface tokens ─── */
+    --background: 0 0% 100%;              /* main panel: pure white */
+    --foreground: 222 20% 11%;            /* near-black, slight cool tint */
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 20% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 20% 11%;
+
+    /* Primary = dark neutral used for main CTAs and section headings. */
+    --primary: 222 22% 12%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 20% 11%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 220 14% 94%;
+    --accent-foreground: 222 20% 11%;
+
+    /* Brand accent — used sparingly for focus rings, active nav, links. */
+    --brand: 244 76% 62%;                 /* soft indigo */
+    --brand-foreground: 0 0% 100%;
+    --brand-soft: 244 76% 62% / 0.10;
+
+    --destructive: 5 55% 48%;
+    --destructive-foreground: 0 0% 98%;
+    --destructive-soft: 5 55% 48% / 0.10;
+
+    --success: 152 48% 40%;
+    --success-soft: 152 48% 40% / 0.12;
+
+    --warning: 34 90% 52%;
+    --warning-soft: 34 90% 52% / 0.14;
+
+    --border: 220 14% 10% / 0.06;
+    --border-strong: 220 14% 10% / 0.12;
+    --input: 220 14% 10% / 0.10;
+    --ring: 0 0% 0%;                    /* black for focus */
+
+    /* Sidebar is transparent over the app background for a calm, Flow-like
+       composition where the white panel floats inside a neutral shell. */
+    --sidebar: 60 17% 84.5%;
+    --sidebar-foreground: 222 20% 11%;
+
+    /* App shell background (outside the main panel). */
+    --app-bg: 220 20% 94%;
+
+    --radius: 0.75rem;
+
+    /* Legacy compat tokens - kept for components not yet fully migrated */
+    --text-primary: #111111;
+    --text-secondary: rgba(17, 17, 17, 0.68);
+    --text-muted: rgba(17, 17, 17, 0.45);
+    --text-faint: rgba(17, 17, 17, 0.32);
+
+    --toast-bg: #F0F2F2;
+    --toast-border: rgba(0,0,0,0.10);
+    --toast-text: #111111;
+    --toast-shadow: 0 4px 24px rgba(0,0,0,0.10);
+    --toast-success-chip-bg: rgba(60,140,90,0.10);
+    --toast-success-chip-fg: #2a7a42;
+    --toast-error-chip-bg: rgba(170,64,56,0.10);
+    --toast-error-chip-fg: #AA4038;
+    --toast-info-chip-bg: rgba(0,0,0,0.06);
+    --toast-info-chip-fg: #2C2C2C;
+
+    --status-idle-text: rgba(17,17,17,0.55);
+    --status-idle-bg: rgba(0,0,0,0.05);
+    --status-idle-border: rgba(0,0,0,0.08);
+    --status-recording-text: #AA4038;
+    --status-recording-bg: rgba(170,64,56,0.08);
+    --status-recording-border: rgba(170,64,56,0.18);
+    --status-processing-text: #2C5F6E;
+    --status-processing-bg: rgba(44,95,110,0.08);
+    --status-processing-border: rgba(44,95,110,0.16);
+    --status-error-text: #7a2820;
+    --status-error-bg: rgba(170,64,56,0.08);
+    --status-error-border: rgba(170,64,56,0.18);
+
+    --danger-bg: #AA4038;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  /* Viewport-responsive base font-size — keeps body type at 14px on a
+     ~13" laptop and lifts to ~16px on 27"+ displays so dense panels stay
+     comfortable to read without altering the layout grid. Component
+     paddings/heights remain in px so the chrome doesn't reflow. */
+  html {
+    font-size: clamp(14px, 0.45vw + 11.7px, 16px);
+  }
+
+  body {
+    @apply overflow-hidden select-none m-0 p-0 text-foreground;
+    background: hsl(var(--app-bg));
+    font-family: 'Figtree', system-ui, -apple-system, sans-serif;
+    font-feature-settings: "ss01" 1, "cv02" 1;
+    letter-spacing: -0.005em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Respect the user's system preference — disables the few entrance
+     animations we use so the UI feels instant on reduced-motion setups. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+
+  button, input, select, textarea {
+    font-family: inherit;
+  }
+
+  * {
+    scrollbar-width: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ─── Titlebar drag ─── */
+.titlebar { -webkit-app-region: drag; }
+.no-drag  { -webkit-app-region: no-drag; }
+
+/* ─── Legacy theme compat classes (used by components not yet migrated) ─── */
+@layer components {
+  .theme-app-shell   { @apply text-foreground; }
+  .theme-sidebar     { @apply bg-sidebar rounded-2xl; }
+  .theme-main-panel  { @apply bg-background rounded-2xl relative; }
+  .theme-main-panel::before, .theme-main-panel::after { display: none; }
+
+  .theme-page-container {
+    @apply mx-auto h-full max-w-5xl overflow-y-auto px-8 py-8 text-foreground;
+  }
+
+  .theme-page-title {
+    @apply text-2xl font-bold tracking-tight text-foreground;
+  }
+
+  .theme-section-title {
+    @apply text-sm font-semibold text-foreground;
+  }
+
+  .theme-card {
+    @apply bg-card border border-border rounded-xl;
+  }
+
+  .theme-card-soft {
+    @apply bg-muted border border-border rounded-xl;
+  }
+
+  .theme-stat-card {
+    @apply bg-muted border border-border rounded-xl;
+  }
+
+  .theme-stat-icon {
+    @apply bg-secondary text-foreground;
+  }
+
+  .theme-list {
+    @apply overflow-hidden rounded-xl border border-border bg-muted;
+  }
+
+  .theme-list-row {
+    @apply transition-colors duration-100;
+  }
+  .theme-list-row:hover {
+    @apply bg-accent;
+  }
+
+  .theme-toolbar-search {
+    @apply flex items-center gap-2 h-9 rounded-lg border border-border bg-background/60 px-3;
+  }
+
+  .theme-toolbar-input {
+    @apply w-full border-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground;
+  }
+
+  .theme-field {
+    @apply w-full h-10 rounded-lg border border-border bg-background/60 px-3 text-foreground text-sm transition-colors;
+    @apply placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/20;
+  }
+
+  .theme-button-primary {
+    @apply inline-flex items-center justify-center h-9 rounded-md bg-primary text-primary-foreground px-4 text-sm font-medium;
+    @apply transition-[transform,opacity,box-shadow] duration-200 hover:opacity-95 disabled:opacity-40 disabled:cursor-not-allowed;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: 0 12px 24px -18px hsla(222, 30%, 10%, 0.55);
+  }
+
+  .theme-button-secondary {
+    @apply inline-flex items-center justify-center h-9 rounded-md bg-secondary text-secondary-foreground border border-border px-4 text-sm font-medium;
+    @apply transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: 0 10px 22px -20px hsla(222, 30%, 10%, 0.28);
+  }
+
+  .theme-icon-button {
+    @apply inline-flex items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground;
+  }
+
+  .theme-pill {
+    @apply inline-flex items-center justify-center rounded-lg border border-border bg-background/50 text-foreground;
+  }
+
+  .theme-kbd {
+    @apply inline-flex items-center justify-center rounded-md border border-border bg-muted text-foreground px-2 py-0.5 text-xs font-medium;
+  }
+
+  .theme-tab {
+    @apply relative pb-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground;
+  }
+  .theme-tab.is-active {
+    @apply text-foreground;
+  }
+  .theme-tab.is-active::after {
+    content: "";
+    @apply absolute left-0 right-0 bottom-0 h-0.5 rounded-full bg-foreground;
+  }
+
+  .theme-divider {
+    border-color: hsl(var(--border));
+  }
+
+  .theme-selected-surface {
+    @apply !border-foreground/20 !bg-foreground/5;
+  }
+
+  .theme-page-dashboard { background: transparent; }
+
+  /* ─── Unified page layout primitives ───
+     Every top-level tab (Dashboard, Dictionary, Snippets, Style) uses
+     these for a consistent rhythm: same page padding, same header style,
+     same subtitle treatment. Keeps the app visually cohesive. */
+  .page-shell {
+    @apply h-full overflow-y-auto px-7 pb-8 pt-6;
+    scrollbar-gutter: stable;
+  }
+
+  .page-header {
+    @apply mb-5 flex items-start justify-between gap-6;
+  }
+
+  /* Top of the typography ladder. Default tracking reads better than
+     `tracking-tight` once the base font scales up on large monitors. */
+  .page-title {
+    @apply text-[28px] font-semibold leading-tight text-foreground;
+    font-family: 'Figtree', system-ui, sans-serif;
+    letter-spacing: -0.01em;
+  }
+
+  .page-subtitle {
+    @apply mt-1.5 max-w-[60ch] text-sm leading-relaxed text-muted-foreground;
+  }
+
+  /* In-card / in-section heading. Sized to sit one tier below page-title
+     and one tier above body text. */
+  .card-title {
+    @apply text-base font-semibold leading-snug text-foreground;
+  }
+
+  .section-title {
+    @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground;
+  }
+
+  /* Unified soft card surface — used for list groups, hero blocks, stat
+     cards. Keeps borders subtle and shadow minimal for a clean feel. */
+  .surface {
+    @apply rounded-2xl border border-border bg-card;
+  }
+  .surface-soft {
+    @apply rounded-2xl border border-border bg-muted/60;
+  }
+
+  /* Primary CTA — consistent sizing and subtle depth. 14px text matches
+     body so primary actions read as part of the page, not louder. */
+  .btn-primary {
+    @apply inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground;
+    @apply transition-[transform,opacity,box-shadow,background-color] duration-200;
+    @apply hover:opacity-95 disabled:opacity-40 disabled:cursor-not-allowed;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+    transform: translateZ(0);
+    box-shadow: 0 10px 24px -16px hsla(222, 30%, 10%, 0.55);
+  }
+
+  .btn-secondary {
+    @apply inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-border bg-secondary px-4 text-sm font-medium text-secondary-foreground;
+    @apply transition-[transform,background-color,border-color,box-shadow,color] duration-200;
+    @apply hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+    transform: translateZ(0);
+    box-shadow: 0 10px 22px -20px hsla(222, 30%, 10%, 0.24);
+  }
+
+  .btn-ghost-icon {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground;
+    @apply transition-[transform,background-color,border-color,color,box-shadow] duration-200 hover:bg-accent hover:text-foreground disabled:opacity-40;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+    transform: translateZ(0);
+  }
+
+  /* Sidebar nav item — always full-contrast label colour so every item
+     stays legible whether idle, hovered, or active. Only the surface
+     treatment distinguishes the active item. */
+  .nav-item {
+    @apply flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[14.5px] font-semibold text-foreground;
+    @apply transition-colors duration-200 hover:bg-black/[0.04];
+  }
+  .nav-item.is-active {
+    @apply bg-black/[0.05] text-foreground;
+  }
+
+  .stat-num {
+    font-family: 'Playfair Display', 'Georgia', 'Times New Roman', serif;
+  }
+
+  .kbd-key {
+    @apply inline-flex min-w-[40px] items-center justify-center rounded-[8px] border border-[rgba(0,0,0,0.14)] bg-white px-2.5 py-1 text-[13px] font-semibold text-foreground;
+    font-family: 'Figtree', system-ui, sans-serif;
+    box-shadow:
+      0 1px 0 rgba(0,0,0,0.10),
+      0 2px 0 rgba(0,0,0,0.06),
+      inset 0 1px 0 rgba(255,255,255,0.75);
+    text-transform: capitalize;
+    letter-spacing: 0;
+  }
+}
+
+/* ─── Brand gradient (subtle warm wash used on hero cards) ───
+   A tiny amount of color for the hero/empty-state banners so the app
+   doesn't feel flat. Kept extremely soft to stay on-theme. */
+@layer utilities {
+  .bg-hero-soft {
+    background:
+      radial-gradient(120% 120% at 100% 0%, hsla(244, 76%, 62%, 0.10) 0%, transparent 55%),
+      radial-gradient(120% 120% at 0% 100%, hsla(34, 90%, 60%, 0.09) 0%, transparent 50%),
+      linear-gradient(135deg, hsla(220, 14%, 98%, 1) 0%, hsla(220, 14%, 96%, 1) 100%);
+  }
+  .bg-hero-mono {
+    background:
+      radial-gradient(120% 120% at 100% 0%, hsla(222, 20%, 11%, 0.04) 0%, transparent 55%),
+      linear-gradient(135deg, hsla(220, 14%, 98%, 1) 0%, hsla(220, 14%, 95%, 1) 100%);
+  }
+}

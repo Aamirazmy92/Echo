@@ -1,0 +1,92 @@
+name: Windows Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'voicetype/**'
+      - '.github/workflows/windows-release.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: voicetype
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: voicetype/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build distributables
+        run: npm run make
+        env:
+          SIGNING_CERT_PATH: ${{ secrets.SIGNING_CERT_PATH }}
+          SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+
+      - name: Collect release files
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $releaseDir = Join-Path $PWD 'release-artifacts'
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+
+          $files = @(
+            "out\make\squirrel.windows\x64\Echo-$version Setup.exe",
+            "out\make\zip\win32\x64\Echo-win32-x64-$version.zip",
+            "out\make\squirrel.windows\x64\echo-$version-full.nupkg",
+            'out\make\squirrel.windows\x64\RELEASES'
+          )
+
+          foreach ($file in $files) {
+            Copy-Item -Path $file -Destination $releaseDir -Force
+          }
+
+          $hashLines = Get-ChildItem -Path $releaseDir -File |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = (Get-FileHash -Algorithm SHA256 -Path $_.FullName).Hash.ToLowerInvariant()
+              "$hash  $($_.Name)"
+            }
+
+          Set-Content -Path (Join-Path $releaseDir 'SHA256SUMS.txt') -Value $hashLines
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: echo-windows-release
+          path: voicetype/release-artifacts/*
+          if-no-files-found: error
+
+      - name: Publish GitHub release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            voicetype/release-artifacts/*
+          generate_release_notes: true
+          prerelease: false

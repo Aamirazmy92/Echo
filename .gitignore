@@ -1,0 +1,21 @@
+# Repository-root .gitignore.
+#
+# The actual app lives in `voicetype/` and has its own .gitignore for
+# build artifacts, node_modules, etc. This file only excludes the
+# personal/tooling junk that lives at the workspace root.
+
+# Per-user IDE / editor settings
+.vscode/
+.idea/
+
+# Claude Code / OpenClaude tooling state. The profile JSON in particular
+# can contain API keys — never commit it.
+.claude/
+.openclaude-profile.json
+
+# OS metadata
+Thumbs.db
+.DS_Store
+
+# Stray logs at the workspace root
+*.log
