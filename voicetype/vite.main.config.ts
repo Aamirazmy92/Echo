@@ -1,39 +1,42 @@
 import { defineConfig } from 'vite';
 
+// Modules that physically cannot be inlined into the main-process bundle
+// and must remain runtime `require()`s:
+//   - `electron` itself (provided by the Electron runtime).
+//   - Native addons that load `.node` binaries from disk. These are
+//     unpacked from app.asar by `@electron-forge/plugin-auto-unpack-natives`
+//     and copied into the staged build by the `packageAfterCopy` hook in
+//     forge.config.ts (because the Forge Vite plugin wipes node_modules).
+const NATIVE_OR_RUNTIME_EXTERNALS = [
+  'electron',
+  'better-sqlite3',
+  '@huggingface/transformers',
+  'onnxruntime-node',
+  'sharp',
+];
+
 export default defineConfig({
   build: {
     ssr: true,
     outDir: '.vite/build',
     rollupOptions: {
       input: 'src/main/index.ts',
-      // Modules left out of the main-process bundle. These either:
-      //   1. Are native addons that must load .node binaries from disk
-      //      (better-sqlite3, onnxruntime-node, sharp).
-      //   2. Are core Node modules that Electron provides at runtime
-      //      (electron, child_process, fs, path, os).
-      //   3. Use dynamic, platform-conditional `require()` calls that
-      //      Rollup can't statically trace, so bundling them produces a
-      //      broken artifact that throws "Cannot find module ..." at
-      //      runtime (electron-updater is the canonical example).
-      // Anything externalized here must be installed as a regular
-      // `dependency` so it ships inside `app.asar` after packaging.
-      external: [
-        'electron',
-        'electron-updater',
-        'child_process',
-        'fs',
-        'path',
-        'os',
-        'better-sqlite3',
-        '@huggingface/transformers',
-        'onnxruntime-node',
-        'sharp',
-      ],
+      external: NATIVE_OR_RUNTIME_EXTERNALS,
       output: {
         format: 'cjs',
         entryFileNames: 'main.js',
-      }
-    }
+      },
+    },
+  },
+  // Force every other dependency to be bundled into main.js. The Forge
+  // Vite plugin does NOT ship `node_modules` into `app.asar`, so anything
+  // left external (other than the native modules above) will throw
+  // "Cannot find module ..." at runtime. `noExternal: true` makes Vite
+  // inline `electron-updater`, `electron-store`, `openai`,
+  // `electron-squirrel-startup`, and all of their transitive deps.
+  ssr: {
+    noExternal: true,
+    external: NATIVE_OR_RUNTIME_EXTERNALS,
   },
   resolve: {
     mainFields: ['module', 'jsnext:main', 'jsnext'],

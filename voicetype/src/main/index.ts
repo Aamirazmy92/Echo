@@ -2,6 +2,13 @@ import { app, BrowserWindow, ipcMain, Notification, session, shell, screen, cras
 import path from 'path';
 import fs from 'fs';
 import { autoUpdater } from 'electron-updater';
+// Static import (instead of dynamic `require`) so Vite reliably bundles
+// this tiny helper into main.js. It returns true when Squirrel launches
+// the app with --squirrel-install / --squirrel-update / --squirrel-uninstall
+// CLI flags so the app exits without spinning up a window. Package ships
+// no types, hence the `// @ts-expect-error` comment below.
+// @ts-expect-error - electron-squirrel-startup has no bundled types
+import squirrelStartup from 'electron-squirrel-startup';
 import type { DictionaryItemInput, Settings, SnippetInput, SpeechMetrics } from '../shared/types';
 import { initStore, getSettings, saveSettings, hasGroqApiKey, setGroqApiKey, clearGroqApiKey, isSecureStorageAvailable, getGroqApiKeyPlain } from './store';
 import { installGlobalErrorHandlers, logError, logInfo, logWarn } from './logger';
@@ -368,7 +375,7 @@ function cancelCurrentDictation() {
   updateOverlayState('idle');
 }
 
-if (require('electron-squirrel-startup')) {
+if (squirrelStartup) {
   app.quit();
 }
 

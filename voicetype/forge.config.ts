@@ -5,8 +5,19 @@ import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { PublisherGithub } from '@electron-forge/publisher-github';
 import { VitePlugin } from '@electron-forge/plugin-vite';
+import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+
+// Native node modules cannot be bundled by Vite into main.js (they load
+// `.node` binaries via `process.dlopen`). They must remain runtime
+// requires AND must physically exist in the staged build's `node_modules`
+// for `require()` to resolve them. The Forge Vite plugin wipes
+// `node_modules` during packaging, so we copy these dirs back in the
+// `packageAfterCopy` hook below. Once they are back in place,
+// `@electron-forge/plugin-auto-unpack-natives` moves the `.node` files to
+// `app.asar.unpacked` so `process.dlopen` can read them off disk.
+const NATIVE_MAIN_DEPS = ['better-sqlite3', 'bindings', 'file-uri-to-path'];
 
 const bundledModelPath = path.join(__dirname, 'vendor', 'whispercpp', 'ggml-base.bin');
 const extraResource: NonNullable<ForgeConfig['packagerConfig']>['extraResource'] = [
@@ -35,6 +46,31 @@ const config: ForgeConfig = {
     appCopyright: `Copyright (c) ${new Date().getFullYear()} Aamir Azmi`,
   },
   rebuildConfig: {},
+  hooks: {
+    // The Forge Vite plugin wipes `node_modules` from the staged build,
+    // assuming Vite has bundled every dependency. That works for pure-JS
+    // packages but is impossible for native addons (they load `.node`
+    // binaries via `process.dlopen`). Copy the native modules — and their
+    // own dependency trees — back into the staged `node_modules` so
+    // `require('better-sqlite3')` resolves at runtime, and so
+    // `auto-unpack-natives` finds the `.node` files to unpack.
+    packageAfterCopy: async (_forgeConfig, buildPath) => {
+      const projectRoot = __dirname;
+      const sourceModulesDir = path.join(projectRoot, 'node_modules');
+      const targetModulesDir = path.join(buildPath, 'node_modules');
+      await fs.promises.mkdir(targetModulesDir, { recursive: true });
+      for (const dep of NATIVE_MAIN_DEPS) {
+        const src = path.join(sourceModulesDir, dep);
+        const dst = path.join(targetModulesDir, dep);
+        if (!fs.existsSync(src)) {
+          // eslint-disable-next-line no-console
+          console.warn(`[forge] native dep missing in node_modules: ${dep}`);
+          continue;
+        }
+        await fs.promises.cp(src, dst, { recursive: true });
+      }
+    },
+  },
   makers: [
     new MakerSquirrel({
       // Code signing — reads SIGNING_CERT_PATH and SIGNING_CERT_PASSWORD from env
@@ -56,6 +92,11 @@ const config: ForgeConfig = {
     }),
   ],
   plugins: [
+    // Moves any `.node` binaries it finds in node_modules out of app.asar
+    // and into app.asar.unpacked, where Node's process.dlopen can load
+    // them at runtime. Must be paired with the packageAfterCopy hook
+    // above which puts the native modules back into node_modules.
+    new AutoUnpackNativesPlugin({}),
     new VitePlugin({
       build: [
         {
