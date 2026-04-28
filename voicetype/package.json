@@ -1,7 +1,7 @@
 {
   "name": "echo",
   "productName": "Echo",
-  "version": "1.0.2",
+  "version": "1.0.0",
   "author": "Aamir Azmi",
   "description": "Voice dictation for Windows: hold a hotkey, speak, and the transcript is typed into the focused app.",
   "license": "UNLICENSED",
