@@ -56,11 +56,11 @@ function quoteForCmd(value) {
 
 function spawnCommand(cmd, args, opts = {}) {
   if (process.platform === 'win32' && CMD_SHIMS.has(cmd)) {
-    return spawnSync('cmd.exe', ['/d', '/s', '/c', [cmd, ...args].map(quoteForCmd).join(' ')], {
+    return spawnSync('cmd.exe', ['/d', '/c', [cmd, ...args].map(quoteForCmd).join(' ')], {
       cwd: projectRoot,
       shell: false,
       env: process.env,
-      windowsVerbatimArguments: true,
+      windowsVerbatimArguments: false,
       ...opts,
     });
   }
