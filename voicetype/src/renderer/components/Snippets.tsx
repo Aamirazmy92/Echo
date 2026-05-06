@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, ArrowUpDown, Check, Pencil, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { Snippet, SnippetInput } from '../../shared/types';
 import ConfirmationModal from './ConfirmationModal';
 import { Dialog, DialogContent } from './ui/dialog';
+import { toast } from './toast/useToast';
 
 type SnippetScope = 'all' | 'personal';
 type SortMode = 'newest' | 'oldest' | 'alphabetical';
@@ -26,7 +27,7 @@ export default function SnippetsView() {
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
 
   const load = async () => {
-    const data = await (window as any).api.getSnippets();
+    const data = await window.api.getSnippets();
     setSnippets(data);
   };
 
@@ -111,23 +112,38 @@ export default function SnippetsView() {
 
     if (!trigger || !expansion) return;
 
-    await (window as any).api.saveSnippet({
-      id: draft.id,
-      trigger,
-      expansion,
-      category,
-      shared: draft.shared,
-    });
+    const isEditing = draft.id !== undefined;
 
-    closeModal();
-    await load();
+    try {
+      await window.api.saveSnippet({
+        id: draft.id,
+        trigger,
+        expansion,
+        category,
+        shared: draft.shared,
+      });
+      toast.success(`"${trigger}" ${isEditing ? 'updated' : 'added successfully'}`);
+      closeModal();
+      await load();
+    } catch (err) {
+      console.error('Failed to save snippet:', err);
+      toast.error(`Could not save "${trigger}". Try again.`);
+    }
   };
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
-    await (window as any).api.deleteSnippet(deleteTarget.id);
-    setDeleteTarget(null);
-    await load();
+    const triggerLabel = deleteTarget.trigger;
+    try {
+      await window.api.deleteSnippet(deleteTarget.id);
+      toast.success(`"${triggerLabel}" removed`);
+      setDeleteTarget(null);
+      await load();
+    } catch (err) {
+      console.error('Failed to delete snippet:', err);
+      toast.error(`Could not delete "${triggerLabel}".`);
+      setDeleteTarget(null);
+    }
   };
 
   return (

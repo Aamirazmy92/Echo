@@ -73,8 +73,13 @@ const config: ForgeConfig = {
   },
   makers: [
     new MakerSquirrel({
-      // Code signing — reads SIGNING_CERT_PATH and SIGNING_CERT_PASSWORD from env
-      // If not set, the build proceeds unsigned (for dev builds)
+      // Code signing — reads SIGNING_CERT_PATH and SIGNING_CERT_PASSWORD
+      // from env. The presence of these vars during `npm run make` /
+      // `publish` is enforced by `scripts/verify-release-assets.cjs`,
+      // which fails fast if either is missing (unless ECHO_ALLOW_UNSIGNED=1
+      // is set for an explicit local-only test build). If we ever
+      // shipped an unsigned release to users running a signed prior
+      // version, Squirrel would permanently refuse to auto-update them.
       certificateFile: process.env.SIGNING_CERT_PATH,
       certificatePassword: process.env.SIGNING_CERT_PASSWORD,
       name: 'Echo',

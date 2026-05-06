@@ -45,7 +45,7 @@ export default function SidebarStatsNotch() {
 
   const loadData = useCallback(async () => {
     try {
-      const data = await (window as any).api.getDashboardData(50, 0) as {
+      const data = await window.api.getDashboardData(50, 0) as {
         stats: DashboardStats;
       };
       setStats(data.stats);
@@ -57,7 +57,7 @@ export default function SidebarStatsNotch() {
   useEffect(() => {
     void loadData();
 
-    const unsub = (window as any).api.onTranscriptionResult(() => {
+    const unsub = window.api.onTranscriptionResult(() => {
       void loadData();
     });
 

@@ -1,6 +1,6 @@
 import type { AppState } from '../../shared/types';
 
-const api = (window as any).api;
+const api = window.api;
 
 try {
   const params = new URLSearchParams(window.location.search);
@@ -25,7 +25,6 @@ const MIN_BAR_HEIGHT = 2;
 let state: AppState = 'idle';
 let levels: number[] = [];
 let rafId: number | null = null;
-let frame = 0;
 let smoothed = new Array(BAR_COUNT).fill(0);
 
 function getMode(nextState: AppState): 'idle' | 'wave' | 'processing' {
@@ -109,8 +108,6 @@ function resetBars() {
 }
 
 function animateBars() {
-  frame += 1;
-
   for (let index = 0; index < BAR_COUNT; index += 1) {
     const bar = barElements[index];
     const band = Math.min(1, Math.max(0, sampleVoiceEnergy(levels, index)));

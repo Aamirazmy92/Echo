@@ -7,7 +7,7 @@ export default function StyleView() {
   const [settings, setSettings] = useState<Settings | null>(null);
 
   useEffect(() => {
-    (window as any).api.getSettings().then((loadedSettings: Settings) => {
+    window.api.getSettings().then((loadedSettings: Settings) => {
       setSettings(loadedSettings);
     });
   }, []);
@@ -16,10 +16,10 @@ export default function StyleView() {
     setSettings((previous) => (previous ? { ...previous, ...partial } : previous));
 
     try {
-      const saved = await (window as any).api.saveSettings(partial);
+      const saved = await window.api.saveSettings(partial);
       setSettings(saved);
     } catch (error) {
-      const restored = await (window as any).api.getSettings();
+      const restored = await window.api.getSettings();
       setSettings(restored);
       throw error;
     }
@@ -36,7 +36,7 @@ export default function StyleView() {
     (settings.selectedGlobalStyleId === null || settings.selectedGlobalStyleId === undefined);
   useEffect(() => {
     if (needsDefaultStyle) {
-      void (window as any).api.saveSettings({ selectedGlobalStyleId: 'casual' }).then((saved: Settings) => {
+      void window.api.saveSettings({ selectedGlobalStyleId: 'casual' }).then((saved: Settings) => {
         setSettings(saved);
       });
     }
@@ -133,12 +133,12 @@ function ToneCard({
           Adds a touch of editorial character to differentiate this page
           from the rest of the app. */}
       <h3
-        className="stat-num pr-8 text-[30px] font-semibold leading-[1.05] text-foreground"
+        className="stat-num pr-8 text-[22px] font-semibold leading-[1.1] text-foreground"
         style={{ letterSpacing: '-0.01em' }}
       >
         {cfg.label}
       </h3>
-      <p className="mt-1.5 text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+      <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
         {cfg.subtitle}
       </p>
 

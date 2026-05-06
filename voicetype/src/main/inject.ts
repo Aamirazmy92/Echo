@@ -259,11 +259,11 @@ function ensureSendInputHelper(): Promise<void> {
   return sendInputHelperReadyPromise;
 }
 
-function isSendInputHelperReady(): boolean {
+function _isSendInputHelperReady(): boolean {
   return sendInputHelperReady && !!sendInputHelper && !sendInputHelper.killed;
 }
 
-async function typeWithSendInput(text: string): Promise<void> {
+async function _typeWithSendInput(text: string): Promise<void> {
   await ensureSendInputHelper();
 
   if (!sendInputHelper) {

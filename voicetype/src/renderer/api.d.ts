@@ -1,6 +1,6 @@
 // ---- Preload bridge types -------------------------------------------------
 // Mirrors the shape exposed by `src/main/preload.ts` so the renderer no
-// longer has to reach through `(window as any).api`. Signatures here should
+// longer has to reach through `window.api`. Signatures here should
 // track what `contextBridge.exposeInMainWorld('api', ...)` publishes.
 import type {
   AppState,
@@ -25,8 +25,17 @@ type ModelDownloadProgress = {
   bytesTotal: number;
 };
 
+export interface UpdateStatusPayload {
+  state: 'unsupported' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
+  version: string | null;
+  progress: number | null;
+  error: string | null;
+  lastCheckedAt: string | null;
+}
+
 export interface EchoApi {
   getInitialTheme: () => 'light' | 'dark';
+  getAppVersion: () => Promise<string>;
   getSettings: () => Promise<Settings>;
   saveSettings: (patch: Partial<Settings>) => Promise<Settings>;
   suspendHotkey: () => Promise<void>;
@@ -73,7 +82,14 @@ export interface EchoApi {
   windowToggleMaximize: () => void;
   windowClose: () => void;
   reportRendererError: (scope: string, message: string, stack?: string) => void;
-  onUpdateReady: (cb: () => void) => () => void;
+
+  // ── Auto-update ──
+  updateGetStatus: () => Promise<UpdateStatusPayload>;
+  updateCheck: () => Promise<void>;
+  updateDownload: () => Promise<void>;
+  updateInstall: () => Promise<void>;
+  onUpdateStatus: (cb: (status: UpdateStatusPayload) => void) => () => void;
+
   onModelDownloadProgress: (
     cb: (state: string, progress?: ModelDownloadProgress, error?: string) => void
   ) => () => void;
@@ -81,6 +97,41 @@ export interface EchoApi {
   isSecureStorageAvailable: () => Promise<boolean>;
   setGroqApiKey: (key: string) => Promise<Settings>;
   clearGroqApiKey: () => Promise<Settings>;
+
+  // ── Auth (Supabase) ──
+  authConfigStatus: () => Promise<{ configured: boolean }>;
+  authGetSession: () => Promise<AuthSession | null>;
+  authSignIn: (email: string, password: string) => Promise<{ error?: string }>;
+  authSignUp: (
+    email: string,
+    password: string,
+    displayName?: string
+  ) => Promise<{ error?: string; needsConfirmation?: boolean }>;
+  authSignOut: () => Promise<{ error?: string }>;
+  authResetPassword: (email: string) => Promise<{ error?: string }>;
+  authGoogleSignIn: () => Promise<{ error?: string }>;
+  authDeleteAccount: () => Promise<{ error?: string }>;
+  authUpdateDisplayName: (name: string) => Promise<{ error?: string }>;
+  onAuthState: (cb: (session: AuthSession | null) => void) => () => void;
+
+  // ── Cloud sync ──
+  syncGetStatus: () => Promise<SyncStatusPayload>;
+  syncForce: () => Promise<void>;
+  onSyncStatus: (cb: (payload: SyncStatusPayload) => void) => () => void;
+}
+
+export interface AuthSession {
+  userId: string;
+  email: string;
+  displayName: string | null;
+  expiresAt: number | null;
+}
+
+export interface SyncStatusPayload {
+  status: 'idle' | 'syncing' | 'offline' | 'error' | 'signed-out';
+  queueDepth: number;
+  lastError: string | null;
+  lastSyncedAt: string | null;
 }
 
 declare global {

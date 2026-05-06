@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import AuthGate from './auth/AuthGate';
 import './index.css';
 
 /**
@@ -18,15 +19,15 @@ import './index.css';
  * button. Reloading is enough for >95 % of render errors because state
  * lives in `electron-store` / SQLite, not React memory.
  */
-class ErrorBoundary extends React.Component<{ children: any }, { hasError: boolean; error: any }> {
-  constructor(props: any) {
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: unknown }> {
+  constructor(props: { children: React.ReactNode }) {
     super(props);
     this.state = { hasError: false, error: null };
   }
-  static getDerivedStateFromError(error: any) {
+  static getDerivedStateFromError(error: unknown) {
     return { hasError: true, error };
   }
-  componentDidCatch(error: any, errorInfo: { componentStack?: string }) {
+  componentDidCatch(error: unknown, errorInfo: { componentStack?: string }) {
     // Make sure the splash gets out of the way so the recovery card is
     // actually visible if the crash happened during initial render.
     try {
@@ -43,7 +44,7 @@ class ErrorBoundary extends React.Component<{ children: any }, { hasError: boole
       const stack = error instanceof Error
         ? `${error.stack || ''}${errorInfo?.componentStack ? `\n--- componentStack ---${errorInfo.componentStack}` : ''}`
         : (errorInfo?.componentStack || undefined);
-      (window as any).api?.reportRendererError?.('error-boundary', message, stack);
+      window.api?.reportRendererError?.('error-boundary', message, stack);
     } catch {
       // The bridge is best-effort — we never want logging to itself crash
       // a recovery view.
@@ -54,9 +55,11 @@ class ErrorBoundary extends React.Component<{ children: any }, { hasError: boole
   };
   render() {
     if (this.state.hasError) {
-      const detail = this.state.error?.stack
+      const detail = this.state.error instanceof Error && this.state.error.stack
         ? String(this.state.error.stack)
-        : String(this.state.error?.message ?? this.state.error ?? 'Unknown error');
+        : this.state.error instanceof Error
+          ? String(this.state.error.message)
+          : String(this.state.error ?? 'Unknown error');
       return (
         <div
           style={{
@@ -138,7 +141,9 @@ const container = document.getElementById('root') as HTMLElement;
 const root = createRoot(container);
 root.render(
   <ErrorBoundary>
-    <App />
+    <AuthGate>
+      <App />
+    </AuthGate>
   </ErrorBoundary>
 );
 
@@ -156,12 +161,15 @@ let splashDismissed = false;
 const removeSplashNode = () => {
   const splash = document.getElementById('splash');
   if (!splash) return;
-  splash.classList.add('fade-out');
-  const cleanup = () => splash.remove();
-  splash.addEventListener('transitionend', cleanup, { once: true });
-  // Fallback in case `transitionend` never fires (reduced-motion users get
-  // an instant hide, but the node still needs to be detached).
-  window.setTimeout(cleanup, 800);
+  splash.classList.add('is-complete');
+  window.setTimeout(() => {
+    splash.classList.add('fade-out');
+    const cleanup = () => splash.remove();
+    splash.addEventListener('transitionend', cleanup, { once: true });
+    // Fallback in case `transitionend` never fires (reduced-motion users get
+    // an instant hide, but the node still needs to be detached).
+    window.setTimeout(cleanup, 800);
+  }, 260);
 };
 
 const dismissSplash = () => {

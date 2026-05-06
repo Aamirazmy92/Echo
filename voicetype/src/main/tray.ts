@@ -84,7 +84,7 @@ export function updateTrayState(state: AppState) {
 export async function refreshTrayMenu() {
   if (!trayWindow || trayWindow.isDestroyed()) return;
   cachedMicrophones = await getAudioInputDevices(trayWindow);
-  await updateTrayMenu(trayWindow);
+  await updateTrayMenu();
 }
 
 async function getAudioInputDevices(mainWindow: BrowserWindow): Promise<Array<{ id: string; label: string }>> {
@@ -119,7 +119,7 @@ function showTab(tab: AppTab) {
   trayWindow.webContents.send('navigate-tab', tab);
 }
 
-async function updateTrayMenu(mainWindow: BrowserWindow) {
+async function updateTrayMenu() {
   if (!tray) return;
 
   const settings = getSettings();

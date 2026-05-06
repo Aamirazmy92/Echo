@@ -228,14 +228,15 @@ async function downloadModelWithRetry(destination: string): Promise<void> {
 
       sendModelDownloadProgress('ready');
       return;
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       fs.rmSync(destination, { force: true });
       if (attempt < MAX_DOWNLOAD_RETRIES) {
         const delay = DOWNLOAD_RETRY_BASE_DELAY_MS * attempt;
-        sendModelDownloadProgress('error', undefined, `Download attempt ${attempt} failed: ${error?.message || error}. Retrying in ${delay / 1000}s...`);
+        sendModelDownloadProgress('error', undefined, `Download attempt ${attempt} failed: ${message}. Retrying in ${delay / 1000}s...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
       } else {
-        sendModelDownloadProgress('error', undefined, `Model download failed after ${MAX_DOWNLOAD_RETRIES} attempts: ${error?.message || error}`);
+        sendModelDownloadProgress('error', undefined, `Model download failed after ${MAX_DOWNLOAD_RETRIES} attempts: ${message}`);
         throw error;
       }
     }

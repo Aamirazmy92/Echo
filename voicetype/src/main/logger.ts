@@ -25,6 +25,20 @@ const ROTATED_SUFFIX = '.1';
 
 type Level = 'info' | 'warn' | 'error';
 
+const NETWORK_ERROR_MESSAGE = 'Network request failed';
+
+function errorDetails(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+
+  const cause = (error as Error & { cause?: unknown }).cause as { code?: string; message?: string } | undefined;
+  const combined = `${error.name} ${error.message} ${cause?.code ?? ''} ${cause?.message ?? ''}`;
+  if (/fetch failed|network|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|ECONNREFUSED|socket disconnected|TLS connection/i.test(combined)) {
+    return `${error.name}: ${NETWORK_ERROR_MESSAGE}${cause?.code ? ` (${cause.code})` : ''}`;
+  }
+
+  return error.stack ?? `${error.name}: ${error.message}`;
+}
+
 function getLogPath(): string {
   return path.join(app.getPath('userData'), LOG_FILE_NAME);
 }
@@ -32,7 +46,7 @@ function getLogPath(): string {
 function formatLine(level: Level, scope: string, message: string, error?: unknown): string {
   const timestamp = new Date().toISOString();
   const errPart = error
-    ? ` :: ${error instanceof Error ? (error.stack ?? `${error.name}: ${error.message}`) : String(error)}`
+    ? ` :: ${errorDetails(error)}`
     : '';
   return `[${timestamp}] [${level}] [${scope}] ${message}${errPart}\n`;
 }

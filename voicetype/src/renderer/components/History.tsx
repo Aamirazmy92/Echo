@@ -3,6 +3,7 @@ import { ArrowRight, ArrowUpDown, Check, Pencil, RefreshCw, Search, Trash2 } fro
 import { DictionaryItem, DictionaryItemInput } from '../../shared/types';
 import ConfirmationModal from './ConfirmationModal';
 import { Dialog, DialogContent } from './ui/dialog';
+import { toast } from './toast/useToast';
 
 type DictionaryScope = 'all' | 'personal';
 type SortMode = 'newest' | 'oldest' | 'alphabetical';
@@ -33,7 +34,7 @@ export default function HistoryView() {
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
 
   const load = async () => {
-    const data = await (window as any).api.getDictionaryItems();
+    const data = await window.api.getDictionaryItems();
     setItems(data);
   };
 
@@ -126,23 +127,44 @@ export default function HistoryView() {
     if (!phrase) return;
     if (isReplacement && !misspelling) return;
 
-    await (window as any).api.saveDictionaryItem({
-      id: draft.id,
-      phrase,
-      misspelling: isReplacement ? misspelling : null,
-      correctMisspelling: isReplacement,
-      shared: false,
-    });
+    // Build the user-visible label for the toast. Replacement entries
+    // show the "misspelling → phrase" mapping so users immediately see
+    // which rule was saved; plain word entries just show the phrase.
+    const label = isReplacement ? `${misspelling} → ${phrase}` : phrase;
+    const isEditing = editorMode === 'edit';
 
-    closeModal();
-    await load();
+    try {
+      await window.api.saveDictionaryItem({
+        id: draft.id,
+        phrase,
+        misspelling: isReplacement ? misspelling : null,
+        correctMisspelling: isReplacement,
+        shared: false,
+      });
+      toast.success(`"${label}" ${isEditing ? 'updated' : 'added successfully'}`);
+      closeModal();
+      await load();
+    } catch (err) {
+      console.error('Failed to save dictionary item:', err);
+      toast.error(`Could not save "${label}". Try again.`);
+    }
   };
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
-    await (window as any).api.deleteDictionaryItem(deleteTarget.id);
-    setDeleteTarget(null);
-    await load();
+    const label = deleteTarget.misspelling?.trim()
+      ? `${deleteTarget.misspelling} → ${deleteTarget.phrase}`
+      : deleteTarget.phrase;
+    try {
+      await window.api.deleteDictionaryItem(deleteTarget.id);
+      toast.success(`"${label}" removed`);
+      setDeleteTarget(null);
+      await load();
+    } catch (err) {
+      console.error('Failed to delete dictionary item:', err);
+      toast.error(`Could not delete "${label}".`);
+      setDeleteTarget(null);
+    }
   };
 
   const isReplacementDraft = draft.editKind === 'replacement' || draft.correctMisspelling;
@@ -239,7 +261,7 @@ export default function HistoryView() {
           )}
       </div>
 
-      {/* Create/Edit Modal — shared CSS-only Dialog for snappy open/close. */}
+      {/* Create/Edit Modal — shared Framer Motion Dialog for snappy open/close. */}
       <Dialog open={isModalOpen} onOpenChange={(next) => { if (!next) closeModal(); }}>
         <DialogContent animation="pop" className="max-w-lg" onClose={closeModal}>
           <form onSubmit={saveItem}>

@@ -1,17 +1,35 @@
 import * as React from "react"
-import { motion } from "framer-motion"
+import { createPortal } from "react-dom"
+import { AnimatePresence, motion } from "framer-motion"
 import { X } from "lucide-react"
 import { cn } from "../../lib/utils"
+import {
+  MODAL_BACKDROP_EXIT,
+  MODAL_BACKDROP_INITIAL,
+  MODAL_BACKDROP_OPEN,
+  MODAL_BACKDROP_TRANSITION,
+  MODAL_PANEL_INITIAL,
+  MODAL_PANEL_OPEN,
+  MODAL_PANEL_EXIT,
+  MODAL_OPEN_TRANSITION,
+  MODAL_CLOSE_TRANSITION,
+} from "../../lib/modalMotion"
 
-// Pure-CSS Dialog. We intentionally avoid framer-motion here because its
-// first-mount cost (internal ref/measurement setup + first GPU compositing)
-// produced a very visible stutter the first time the user opened the modal
-// inside a lazy-loaded tab. CSS transitions run on the compositor with no
-// per-frame JS work, so the open feels instant even on cold chunks.
+// Spring-animated Dialog. Framer-motion's spring solver has a one-shot
+// JIT/setup cost the first time it animates a new node — visible as a
+// stutter on the very first modal open. We work around this by mounting
+// `<MotionWarmup>` at app boot (see `MotionWarmup.tsx`) which runs an
+// off-screen spring animation through one full cycle. By the time the
+// user clicks "Add new" the motion runtime is hot and the open is
+// indistinguishable from any subsequent open.
 //
-// The dialog DOM is kept mounted after the first open and only its
-// `opacity`/`visibility`/`pointer-events` toggle, so follow-up opens are
-// similarly instant (no remount, no layout recompute).
+// The backdrop is still driven by a pure CSS transition (cheaper than
+// running a second framer animation) and the panel uses a spring for
+// the satisfying overshoot the user explicitly asked for.
+//
+// We deliberately mount the panel on-demand for shared dialogs and keep
+// the panel opacity constant. Open and close are both spring transforms,
+// and the shell unmounts only after Framer reports the exit complete.
 
 interface DialogProps {
   open: boolean
@@ -20,46 +38,14 @@ interface DialogProps {
 }
 
 type DialogAnimation = "default" | "pop"
-type DialogPhase = "closed" | "enter" | "open" | "exit"
 
-// Share `open` between Dialog and DialogContent so the panel can drive its
-// own CSS transition without touching the DOM imperatively.
-const DialogOpenContext = React.createContext<DialogPhase>("closed")
-const DIALOG_EXIT_DURATION_MS = 95
-const MODAL_OPEN_TRANSITION = { type: "spring", duration: 0.18, bounce: 0.24 } as const
-const MODAL_CLOSE_TRANSITION = { type: "spring", duration: 0.095, bounce: 0.03 } as const
+const DialogOpenContext = React.createContext<{
+  animation: DialogAnimation
+}>({
+  animation: "default",
+})
 
 function Dialog({ open, onOpenChange, children }: DialogProps) {
-  const [phase, setPhase] = React.useState<DialogPhase>("closed")
-
-  React.useLayoutEffect(() => {
-    let exitTimeout = 0
-    let raf1 = 0
-    let raf2 = 0
-
-    if (open) {
-      // Two-step open so the backdrop can transition opacity from 0 -> 1
-      // alongside the panel animation. Without the `enter` paint, the
-      // wrapper would render at opacity 1 immediately and the backdrop
-      // would pop in with no fade.
-      setPhase((current) => (current === "open" ? current : "enter"))
-      raf1 = requestAnimationFrame(() => {
-        raf2 = requestAnimationFrame(() => setPhase("open"))
-      })
-    } else {
-      setPhase((current) => (current === "closed" ? current : "exit"))
-      exitTimeout = window.setTimeout(() => {
-        setPhase("closed")
-      }, DIALOG_EXIT_DURATION_MS)
-    }
-
-    return () => {
-      window.clearTimeout(exitTimeout)
-      cancelAnimationFrame(raf1)
-      cancelAnimationFrame(raf2)
-    }
-  }, [open])
-
   React.useEffect(() => {
     if (!open) return
 
@@ -73,41 +59,39 @@ function Dialog({ open, onOpenChange, children }: DialogProps) {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [open, onOpenChange])
 
-  const isVisible = open || phase !== "closed"
-  const isInteractive = phase === "open"
-  // Backdrop is only fully opaque while the panel is in its `open` resting
-  // phase. During `enter` and `exit` it transitions to/from 0 so the dim
-  // overlay fades in and out alongside the panel.
-  const backdropOpacity = phase === "open" ? 1 : 0
-
-  if (!isVisible) return null
-
-  return (
-    <DialogOpenContext.Provider value={phase}>
-      <div
-        className={cn(
-          "fixed inset-0 z-[180]",
-          isInteractive ? "pointer-events-auto" : "pointer-events-none"
-        )}
-        aria-hidden={!isVisible}
-      >
-        <div
-          className="fixed inset-0 bg-black/15"
-          style={{
-            opacity: backdropOpacity,
-            transition: "opacity 160ms ease-out",
-          }}
-          onClick={() => onOpenChange(false)}
-        />
-        <div
-          className="fixed inset-0 flex items-center justify-center p-4"
-          onClick={() => onOpenChange(false)}
-        >
-          {children}
-        </div>
-      </div>
-    </DialogOpenContext.Provider>
+  const content = (
+    <AnimatePresence initial={false}>
+      {open ? (
+        <DialogOpenContext.Provider value={{ animation: "default" }}>
+          <motion.div
+            key="dialog-root"
+            className="fixed inset-0 z-[180]"
+            aria-hidden={false}
+            initial={{ opacity: 1 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 1 }}
+          >
+            <motion.div
+              className="fixed inset-0 bg-black/15"
+              initial={MODAL_BACKDROP_INITIAL}
+              animate={MODAL_BACKDROP_OPEN}
+              exit={MODAL_BACKDROP_EXIT}
+              transition={MODAL_BACKDROP_TRANSITION}
+              onClick={() => onOpenChange(false)}
+            />
+            <div
+              className="fixed inset-0 flex items-center justify-center p-4"
+              onClick={() => onOpenChange(false)}
+            >
+              {children}
+            </div>
+          </motion.div>
+        </DialogOpenContext.Provider>
+      ) : null}
+    </AnimatePresence>
   )
+
+  return createPortal(content, document.body)
 }
 
 function DialogContent({
@@ -121,17 +105,19 @@ function DialogContent({
   onClose?: () => void
   animation?: DialogAnimation
 }) {
-  const phase = React.useContext(DialogOpenContext)
-  const isPop = animation === "pop"
+  React.useContext(DialogOpenContext)
+  const initial = animation === "pop" ? { opacity: 0, scale: 0.94, y: 6 } : MODAL_PANEL_INITIAL
+
   return (
     <motion.div
       className={cn(
         "relative w-full max-w-lg rounded-2xl border border-border bg-background p-6 shadow-lg transform-gpu",
         className
       )}
-      initial={isPop ? { opacity: 0, scale: 0.94, y: 14 } : { opacity: 0, scale: 0.96, y: 8 }}
-      animate={phase === "exit" ? { opacity: 0, scale: isPop ? 0.97 : 0.98, y: isPop ? 6 : 4 } : { opacity: 1, scale: 1, y: 0 }}
-      transition={phase === "exit" ? MODAL_CLOSE_TRANSITION : MODAL_OPEN_TRANSITION}
+      initial={initial}
+      animate={MODAL_PANEL_OPEN}
+      exit={{ ...MODAL_PANEL_EXIT, transition: MODAL_CLOSE_TRANSITION }}
+      transition={MODAL_OPEN_TRANSITION}
       style={{ willChange: "opacity, transform" }}
       onClick={(e: React.MouseEvent) => e.stopPropagation()}
     >

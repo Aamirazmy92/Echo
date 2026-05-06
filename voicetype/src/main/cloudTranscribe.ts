@@ -1,22 +1,8 @@
-import OpenAI, { toFile } from 'openai';
 import { resolveCloudLanguage } from '../shared/languages';
 
-let cachedClient: OpenAI | null = null;
-let cachedApiKey: string = '';
 const CLOUD_TRANSCRIPTION_MODEL = 'whisper-large-v3';
-
-function getClient(apiKey: string): OpenAI {
-  const cleanKey = apiKey.replace(/\s+/g, '');
-  if (cachedClient && cachedApiKey === cleanKey) return cachedClient;
-  cachedClient = new OpenAI({
-    apiKey: cleanKey,
-    baseURL: 'https://api.groq.com/openai/v1',
-    timeout: 15_000,
-    maxRetries: 2,
-  });
-  cachedApiKey = cleanKey;
-  return cachedClient;
-}
+const GROQ_TRANSCRIPTIONS_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
+const CLOUD_TIMEOUT_MS = 15_000;
 
 function encodeWav(samples: Float32Array, sampleRate: number): Buffer {
   const numSamples = samples.length;
@@ -67,24 +53,43 @@ export async function transcribeWithCloud(
   if (!waveform.length) return { text: '' };
 
   const wavBuffer = encodeWav(waveform, 16000);
-  const file = await toFile(wavBuffer, 'audio.wav', { type: 'audio/wav' });
-
-  const client = getClient(apiKey);
   const langCode = resolveCloudLanguage(language);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CLOUD_TIMEOUT_MS);
+  const wavArrayBuffer = wavBuffer.buffer.slice(wavBuffer.byteOffset, wavBuffer.byteOffset + wavBuffer.byteLength) as ArrayBuffer;
+  const form = new FormData();
+  form.append('file', new Blob([wavArrayBuffer], { type: 'audio/wav' }), 'audio.wav');
+  form.append('model', CLOUD_TRANSCRIPTION_MODEL);
+  form.append('response_format', 'verbose_json');
+  if (langCode !== 'auto') form.append('language', langCode);
+  form.append('prompt', 'Transcribe the speech exactly as spoken. Keep the original language and script. Do not translate.');
+  form.append('temperature', '0');
 
-  const transcription = await client.audio.transcriptions.create({
-    file,
-    model: CLOUD_TRANSCRIPTION_MODEL,
-    response_format: 'verbose_json',
-    ...(langCode !== 'auto' ? { language: langCode } : {}),
-    prompt: 'Transcribe the speech exactly as spoken. Keep the original language and script. Do not translate.',
-    temperature: 0,
-  });
+  let transcription: { text?: unknown; language?: unknown };
+  try {
+    const response = await fetch(GROQ_TRANSCRIPTIONS_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey.replace(/\s+/g, '')}`,
+      },
+      body: form,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(errorText || `Groq transcription failed with HTTP ${response.status}`);
+    }
+
+    transcription = await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 
   return {
-    text: String((transcription as any).text ?? '').replace(/\s+/g, ' ').trim(),
-    detectedLanguage: typeof (transcription as any).language === 'string'
-      ? String((transcription as any).language).trim()
+    text: String(transcription.text ?? '').replace(/\s+/g, ' ').trim(),
+    detectedLanguage: typeof transcription.language === 'string'
+      ? transcription.language.trim()
       : undefined,
   };
 }

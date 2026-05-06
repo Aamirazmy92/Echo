@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Monitor,
-  Mic,
   Clock,
-  Hash,
   Sparkles,
   Cloud,
   HardDrive,
@@ -130,7 +128,7 @@ function ArcGauge({ ratio, label }: { ratio: number; label: string }) {
         <path
           d="M5 50 A 45 45 0 0 1 95 50"
           fill="none"
-          stroke="#f97316"
+          stroke="#1E3A5F"
           strokeWidth={9}
           strokeLinecap="round"
           pathLength={100}
@@ -319,18 +317,19 @@ const CATEGORY_NOUN_PLURAL: Record<AppCategory, string> = {
 const BAR_MAX_PX = 180;
 const BAR_MIN_PX = 32;
 
-// Per-row chip colour: heavier usage → deeper orange, lighter usage →
-// pastel. Returns a background HSL plus a contrasting label colour so the
-// "0%" pill stays readable on its light tint and "77%" stays readable on a
-// saturated bar.
-function orangeShade(pct: number): { bg: string; label: string } {
-  // Lightness ramps from a soft pastel at 0% to a saturated burnt orange
-  // at 100%. Hue stays in the warm-orange range.
-  const lightness = 88 - (pct / 100) * 48; // 88% → 40%
-  const saturation = 80 + (pct / 100) * 15; // 80% → 95%
+// Per-row chip colour: heavier usage → deeper navy (#1E3A5F at 100%),
+// lighter usage → pastel sky-blue. Returns a background HSL plus a
+// contrasting label colour so the "0%" pill stays readable on its light
+// tint and "77%" stays readable on a saturated dark bar.
+function blueShade(pct: number): { bg: string; label: string } {
+  // Lightness ramps from a soft pastel at 0% down to the navy anchor
+  // (#1E3A5F ≈ hsl(212, 52%, 24%)) at 100%. Saturation lifts slightly so
+  // the deeper end reads as a richer brand blue rather than washed grey.
+  const lightness = 86 - (pct / 100) * 62; // 86% → 24%
+  const saturation = 50 + (pct / 100) * 15; // 50% → 65%
   return {
-    bg: `hsl(22, ${saturation}%, ${lightness}%)`,
-    label: lightness < 58 ? 'hsl(0, 0%, 100%)' : 'hsl(22, 70%, 22%)',
+    bg: `hsl(212, ${saturation}%, ${lightness}%)`,
+    label: lightness < 55 ? 'hsl(0, 0%, 100%)' : 'hsl(212, 50%, 18%)',
   };
 }
 
@@ -363,7 +362,7 @@ function CategoryRow({
   // CSS transition lets the flex container reflow the trailing label so it
   // tracks the bar's edge throughout the animation.
   const targetPx = Math.max(BAR_MIN_PX, Math.round((pct / 100) * BAR_MAX_PX));
-  const shade = orangeShade(pct);
+  const shade = blueShade(pct);
   const [barPx, setBarPx] = useState(BAR_MIN_PX);
   useEffect(() => {
     let r1 = 0;
@@ -529,14 +528,14 @@ function VoiceTab({ entries }: { entries: EntryWithDiff[] }) {
                 label="Cloud"
                 count={stats.cloud}
                 pct={stats.cloudPct}
-                color="#ea580c"
+                color="#1E3A5F"
               />
               <MethodRow
                 icon={<HardDrive size={14} />}
                 label="Local"
                 count={stats.local}
                 pct={stats.localPct}
-                color="#fdba74"
+                color="#A8C5E4"
               />
             </div>
           )}
@@ -982,7 +981,7 @@ export default function InsightsView() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const raw = (await (window as any).api.getHistory(HISTORY_FETCH_LIMIT, 0)) as DictationEntry[];
+      const raw = (await window.api.getHistory(HISTORY_FETCH_LIMIT, 0)) as DictationEntry[];
       if (cancelled) return;
       const enriched: EntryWithDiff[] = raw.map((e) => {
         const wordsCorrected = computeWordsCorrected(e);
@@ -999,7 +998,7 @@ export default function InsightsView() {
     // Live-refresh: when a new dictation lands while the user is on the
     // Insights page, re-fetch so the new entry's app shows up in the
     // category breakdown immediately.
-    const api = (window as any).api;
+    const api = window.api;
     const offTranscription =
       typeof api?.onTranscriptionResult === 'function'
         ? api.onTranscriptionResult(() => {

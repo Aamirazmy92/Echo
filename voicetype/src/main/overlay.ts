@@ -7,7 +7,7 @@ let overlayWindow: BrowserWindow | null = null;
 let hideTimer: NodeJS.Timeout | null = null;
 let ipcRegistered = false;
 let currentOverlayState: AppState = 'idle';
-let currentOverlayExtraData: any;
+let currentOverlayExtraData: unknown;
 let overlayReady = false;
 let overlayReadyWaiters: Array<(ready: boolean) => void> = [];
 let overlayHasRenderedFrame = false;
@@ -21,8 +21,6 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 
 const OVERLAY_EXPANDED_WIDTH = 80;
 const OVERLAY_EXPANDED_HEIGHT = 30;
-const OVERLAY_WINDOW_WIDTH = OVERLAY_EXPANDED_WIDTH;
-const OVERLAY_WINDOW_HEIGHT = OVERLAY_EXPANDED_HEIGHT;
 const OVERLAY_DISPLAY_POLL_INTERVAL_MS = 150;
 const OVERLAY_TOP_INSET = 4;
 const OVERLAY_BOTTOM_INSET = 12;
@@ -44,7 +42,7 @@ function getCursorDisplay() {
   return screen.getDisplayNearestPoint(cursorPoint) ?? screen.getPrimaryDisplay();
 }
 
-function getOverlayBounds(expanded: boolean) {
+function getOverlayBounds() {
   // Track the display the cursor is currently on so the overlay appears on
   // the monitor the user is actively using, not the primary.
   const display = getCursorDisplay();
@@ -74,7 +72,7 @@ function getOverlayBounds(expanded: boolean) {
 function applyOverlayBounds() {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
 
-  const bounds = getOverlayBounds(shouldExpandOverlay());
+  const bounds = getOverlayBounds();
   const currentBounds = overlayWindow.getBounds();
 
   if (
@@ -247,7 +245,7 @@ export function createOverlay(): BrowserWindow {
   overlayReady = false;
   overlayHasRenderedFrame = false;
 
-  const initialBounds = getOverlayBounds(shouldExpandOverlay());
+  const initialBounds = getOverlayBounds();
 
   overlayWindow = new BrowserWindow({
     width: initialBounds.width,
@@ -302,14 +300,14 @@ export function createOverlay(): BrowserWindow {
     const baseUrl = new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
     const overlayUrl = new URL('overlay/overlay.html', baseUrl);
     overlayUrl.searchParams.set('anchor', overlayQuery.anchor);
-    overlayWindow.loadURL(overlayUrl.href).catch((err: any) => {
-      console.warn('Overlay load failed (dev):', err.message);
+    overlayWindow.loadURL(overlayUrl.href).catch((err: unknown) => {
+      console.warn('Overlay load failed (dev):', err instanceof Error ? err.message : err);
     });
   } else {
     overlayWindow.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/overlay/overlay.html`), {
       search: `anchor=${encodeURIComponent(overlayQuery.anchor)}`,
-    }).catch((err: any) => {
-      console.warn('Overlay load failed (prod):', err.message);
+    }).catch((err: unknown) => {
+      console.warn('Overlay load failed (prod):', err instanceof Error ? err.message : err);
     });
   }
 
@@ -346,7 +344,7 @@ export function createOverlay(): BrowserWindow {
   return overlayWindow;
 }
 
-export function updateOverlayState(state: AppState, extraData?: any) {
+export function updateOverlayState(state: AppState, extraData?: unknown) {
   currentOverlayState = state;
   currentOverlayExtraData = extraData;
 

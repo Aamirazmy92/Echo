@@ -7,3 +7,8 @@ app.log
 *.db
 *.db-shm
 *.db-wal
+
+# Local environment variables (Supabase keys, etc.). The committed
+# `.env.example` documents what's needed.
+.env
+.env.local

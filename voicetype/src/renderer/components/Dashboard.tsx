@@ -15,6 +15,7 @@ import {
   Calendar as CalendarIcon,
 } from 'lucide-react';
 import { formatHotkeyLabel, DEFAULT_PUSH_TO_TALK_HOTKEY } from '../../shared/hotkey';
+import type { AuthSession } from '../api';
 import ConfirmationModal from './ConfirmationModal';
 import SidebarStatsNotch from './SidebarStatsNotch';
 import { Dialog, DialogContent } from './ui/dialog';
@@ -118,11 +119,9 @@ function Tooltip({ children, content }: { children: ReactNode; content: string }
 
 interface DashboardProps {
   settings: Settings | null;
-  onUpdateSettings: (updates: Partial<Settings>) => void;
 }
 
-export default function Dashboard({ settings: parentSettings, onUpdateSettings }: DashboardProps) {
-  const [stats, setStats] = useState({ totalWords: 0, totalSessions: 0, todayWords: 0, avgSessionMs: 0 });
+export default function Dashboard({ settings: parentSettings }: DashboardProps) {
   const [settings, setSettings] = useState<Settings | null>(parentSettings);
   const [recentEntries, setRecentEntries] = useState<DictationEntry[]>([]);
   const [copiedId, setCopiedId] = useState<number | null>(null);
@@ -150,21 +149,40 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const historyActionsRef = useRef<HTMLDivElement | null>(null);
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
-  const recordingRef = useRef(false);
-  const [isRecording, setIsRecording] = useState(false);
+  // Signed-in user (null when cloud sync isn't configured). Drives the
+  // "Welcome back, {name}" greeting and refreshes live whenever the
+  // user updates their display name in Account settings.
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
 
   useEffect(() => {
     setSettings(parentSettings);
   }, [parentSettings]);
 
+  // Pull the current Supabase session and stay subscribed for changes.
+  // The greeting text rerenders the moment Account.tsx pushes a new
+  // display name through the auth-state event.
+  useEffect(() => {
+    let cancelled = false;
+    void window.api
+      .authGetSession()
+      .then((next) => {
+        if (!cancelled) setAuthSession(next);
+      })
+      .catch(() => undefined);
+    const off = window.api.onAuthState((next) => setAuthSession(next));
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, []);
+
   const loadData = useCallback(async () => {
     try {
-      const data = await (window as any).api.getDashboardData(1000, 0) as {
+      const data = await window.api.getDashboardData(1000, 0) as {
         stats: { totalWords: number; totalSessions: number; todayWords: number; avgSessionMs: number };
         history: DictationEntry[];
       };
 
-      setStats(data.stats);
       setRecentEntries(data.history);
       setHasHistory(data.stats.totalSessions > 0);
     } catch (err) {
@@ -202,25 +220,14 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
 
   const groupedEntries = useMemo(() => (() => {
     const groups: { [key: string]: DictationEntry[] } = {};
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
 
     filteredEntries.forEach(entry => {
       const entryDate = new Date(entry.createdAt);
-      const entryDay = new Date(entryDate.getFullYear(), entryDate.getMonth(), entryDate.getDate());
-      const label =
-        entryDay.getTime() === today.getTime()
-          ? 'Today'
-          : entryDay.getTime() === yesterday.getTime()
-          ? 'Yesterday'
-          : entryDate.toLocaleDateString(undefined, {
-              weekday: 'long',
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-            });
+      const label = entryDate.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      });
 
       if (!groups[label]) groups[label] = [];
       groups[label].push(entry);
@@ -243,7 +250,7 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
       }, 120);
     }
 
-    const unsub = (window as any).api.onTranscriptionResult((_entry: DictationEntry | null) => {
+    const unsub = window.api.onTranscriptionResult((_entry: DictationEntry | null) => {
       void loadData();
     });
     return () => {
@@ -368,18 +375,6 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [exportFormat, selectionMode, selectedIds, filteredEntries, confirmBulkDeleteOpen]);
 
-  const toggleRecording = useCallback(() => {
-    if (recordingRef.current) {
-      recordingRef.current = false;
-      setIsRecording(false);
-      window.dispatchEvent(new Event('manual-stop-recording'));
-    } else {
-      recordingRef.current = true;
-      setIsRecording(true);
-      window.dispatchEvent(new Event('manual-start-recording'));
-    }
-  }, []);
-
   const handleDeleteClick = (id: number, event: React.MouseEvent) => {
     event.stopPropagation();
     setEntryToDelete(id);
@@ -390,7 +385,7 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
     const id = entryToDelete;
 
     try {
-      await (window as any).api.deleteHistoryEntry(id);
+      await window.api.deleteHistoryEntry(id);
       setRecentEntries((prev) => prev.filter((entry) => entry.id !== id));
 
       const toastEvent = new CustomEvent('show-toast', {
@@ -399,6 +394,10 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
       window.dispatchEvent(toastEvent);
     } catch (err) {
       console.error('Failed to delete entry:', err);
+      const toastEvent = new CustomEvent('show-toast', {
+        detail: { message: 'Could not delete entry. Try again.', type: 'error' },
+      });
+      window.dispatchEvent(toastEvent);
     } finally {
       setEntryToDelete(null);
     }
@@ -417,6 +416,10 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
       window.dispatchEvent(toastEvent);
     } catch (err) {
       console.error('Failed to copy text:', err);
+      const toastEvent = new CustomEvent('show-toast', {
+        detail: { message: 'Could not copy. Clipboard permission denied?', type: 'error' },
+      });
+      window.dispatchEvent(toastEvent);
     }
   };
 
@@ -438,7 +441,7 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
       return;
     }
     try {
-      const updated = await (window as any).api.updateHistoryEntry(id, trimmed);
+      const updated = await window.api.updateHistoryEntry(id, trimmed);
       if (updated) {
         setRecentEntries((prev) =>
           prev.map((e) => (e.id === id ? { ...e, text: updated.text } : e))
@@ -456,7 +459,7 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
 
   const handleExport = async (format: 'csv' | 'json') => {
     try {
-      const content = await (window as any).api.exportHistory(format);
+      const content = await window.api.exportHistory(format);
       const blob = new Blob([content], { type: format === 'csv' ? 'text/csv' : 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -484,10 +487,8 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
 
   const confirmClearAll = async () => {
     try {
-      await (window as any).api.clearHistory();
+      await window.api.clearHistory();
       setRecentEntries([]);
-      setStats({ totalWords: 0, totalSessions: 0, todayWords: 0, avgSessionMs: 0 });
-
       const toastEvent = new CustomEvent('show-toast', {
         detail: { message: 'History cleared', type: 'success' },
       });
@@ -556,7 +557,7 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
   const confirmBulkDelete = async () => {
     try {
       const ids = Array.from(selectedIds);
-      await (window as any).api.deleteHistoryEntries(ids);
+      await window.api.deleteHistoryEntries(ids);
       setRecentEntries((prev) => prev.filter((entry) => !selectedIds.has(entry.id)));
 
       const toastEvent = new CustomEvent('show-toast', {
@@ -565,6 +566,10 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
       window.dispatchEvent(toastEvent);
     } catch (err) {
       console.error('Failed to delete entries:', err);
+      const toastEvent = new CustomEvent('show-toast', {
+        detail: { message: 'Could not delete entries. Try again.', type: 'error' },
+      });
+      window.dispatchEvent(toastEvent);
     } finally {
       setConfirmBulkDeleteOpen(false);
       exitSelectionMode();
@@ -594,23 +599,21 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
     }
   };
 
-  const avgSpeed = () => {
-    if (stats.avgSessionMs === 0 || stats.totalSessions === 0) return '0 WPM';
-    const speed = stats.totalWords / (stats.totalSessions * stats.avgSessionMs / 1000 / 60);
-    return `${Math.round(speed || 0)} WPM`;
-  };
-
-  const avgSessionLength = () => {
-    if (!stats.avgSessionMs) return '0s';
-    const totalSeconds = Math.max(1, Math.round(stats.avgSessionMs / 1000));
-    if (totalSeconds < 60) return `${totalSeconds}s`;
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
-  };
-
   const hotkeyStr = formatHotkeyLabel(settings?.pushToTalkHotkey ?? DEFAULT_PUSH_TO_TALK_HOTKEY);
   const hotkeyParts = hotkeyStr.split('+').map((p) => p.trim());
+
+  // Build the greeting. Falls back to plain "Welcome back" when the
+  // session hasn't loaded yet or cloud sync isn't configured. We pull
+  // just the first word of the display name so a long name like
+  // "Aamir Azmy" greets as "Welcome back, Aamir" instead of cramping
+  // the header.
+  const greetingName = (() => {
+    if (!authSession) return null;
+    const raw = authSession.displayName || authSession.email.split('@')[0];
+    if (!raw) return null;
+    return raw.trim().split(/\s+/)[0];
+  })();
+  const welcomeText = greetingName ? `Welcome back, ${greetingName}` : 'Welcome back';
 
   return (
     // Two-region layout: a fixed top zone (welcome header + history toolbar)
@@ -622,13 +625,18 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
         {/* Header: page title, hotkey hint, status */}
         <div className="min-w-0 flex-1 lg:max-w-[820px]">
           <div>
-            <h1 className="page-title">Welcome back</h1>
-            <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
+            <h1 className="page-title">{welcomeText}</h1>
+            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[15px] text-muted-foreground">
               <span>Hold</span>
-              <span className="inline-flex items-center gap-1">
+              <span className="inline-flex flex-wrap items-center gap-1">
                 {hotkeyParts.map((part, idx) => (
                   <span key={idx} className="inline-flex items-center gap-1">
-                    <kbd className="kbd-key">{part}</kbd>
+                    <kbd
+                      className="settings-hotkey-chip inline-flex min-h-[34px] items-center justify-center px-4 py-1.5 text-[13px] font-bold uppercase tracking-[0.08em] text-[#1E3A5F]"
+                      style={{ fontFamily: '"Figtree", system-ui, sans-serif' }}
+                    >
+                      {part}
+                    </kbd>
                     {idx < hotkeyParts.length - 1 && (
                       <span className="text-muted-foreground/60">+</span>
                     )}
@@ -987,7 +995,7 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
                 {/* Sticky day header — pins the current group's date label
                     to the top of the scroll region so the user always
                     knows which day they're looking at while scrolling. */}
-                <div className="sticky top-0 z-10 mb-2 bg-background px-1 pt-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <div className="sticky top-0 z-10 mb-2 bg-background px-1 pt-2 pb-1.5 text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">
                   {groupLabel}
                 </div>
 
@@ -1045,17 +1053,17 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
                                 if (e.key === 'Enter') { e.preventDefault(); saveEdit(entry.id); }
                                 if (e.key === 'Escape') cancelEditing();
                               }}
-                              className="flex-1 rounded-lg border border-border bg-background/60 px-2.5 py-1.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring/20"
+                              className="flex-1 rounded-lg border border-border bg-background/60 px-2.5 py-1.5 text-[16px] text-foreground outline-none focus:ring-2 focus:ring-ring/20"
                             />
                             <button type="button" onClick={(e) => { e.stopPropagation(); saveEdit(entry.id); }} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="Save changes" aria-label="Save changes"><Check size={14} /></button>
                             <button type="button" onClick={(e) => { e.stopPropagation(); cancelEditing(); }} className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Cancel editing" aria-label="Cancel editing"><X size={14} /></button>
                           </div>
                         ) : (
                           <div className="flex items-start gap-4">
-                            <span className="shrink-0 pt-0.5 text-[13px] font-medium text-muted-foreground">
+                            <span className="shrink-0 pt-0.5 text-[14px] font-medium text-muted-foreground">
                               {new Date(entry.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
-                            <p className="min-w-0 flex-1 text-[15px] leading-relaxed text-foreground">{entry.text}</p>
+                            <p className="min-w-0 flex-1 text-[16px] leading-relaxed text-foreground">{entry.text}</p>
                           </div>
                         )}
                       </div>
@@ -1119,7 +1127,7 @@ export default function Dashboard({ settings: parentSettings, onUpdateSettings }
         onClose={() => setConfirmBulkDeleteOpen(false)}
       />
 
-      {/* Export Dialog — shared CSS-only Dialog for snappy open/close. */}
+      {/* Export Dialog — shared Framer Motion Dialog for snappy open/close. */}
       <Dialog open={exportFormat !== null} onOpenChange={(next) => { if (!next) setExportFormat(null); }}>
         <DialogContent className="max-w-sm" onClose={() => setExportFormat(null)}>
           <h2 className="text-[15px] font-semibold text-foreground">Export history</h2>

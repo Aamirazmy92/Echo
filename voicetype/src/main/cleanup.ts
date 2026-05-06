@@ -1,24 +1,9 @@
-import OpenAI from 'openai';
 import { GlobalStyleId, Settings } from '../shared/types';
 import { getGlobalStyleConfig } from '../shared/styleConfig';
 import { getEffectiveLanguageSelection } from '../shared/languages';
-import { getGroqApiKeyPlain } from './store';
 
-let cachedClient: OpenAI | null = null;
-let cachedApiKey = '';
-
-function getClient(apiKey: string): OpenAI {
-  const cleanKey = apiKey.replace(/\s+/g, '');
-  if (cachedClient && cachedApiKey === cleanKey) return cachedClient;
-  cachedClient = new OpenAI({
-    apiKey: cleanKey,
-    baseURL: 'https://api.groq.com/openai/v1',
-    timeout: 10_000,
-    maxRetries: 2,
-  });
-  cachedApiKey = cleanKey;
-  return cachedClient;
-}
+const GROQ_CHAT_COMPLETIONS_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const CLEANUP_TIMEOUT_MS = 10_000;
 
 const ASSISTANT_REPLY_PATTERNS = [
   /\bi (?:do not|don't) (?:see|have|detect|find)\b/i,
@@ -116,19 +101,20 @@ export async function cleanupText(
   rawText: string,
   toneId: GlobalStyleId | null,
   settings: Settings,
-  transcriptLanguage?: string
+  transcriptLanguage?: string,
+  groqApiKey = ''
 ): Promise<string> {
   if (!rawText.trim()) return rawText;
   if (!settings.aiCleanup) return rawText;
 
-  // `settings.groqApiKey` from `getSettings()` is a masked placeholder —
-  // fetch the real plaintext key directly from the store.
-  const apiKey = getGroqApiKeyPlain();
+  // `settings.groqApiKey` from `getSettings()` is a masked placeholder.
+  // The main process passes the real plaintext key in so this dynamically
+  // imported chunk does not create its own uninitialized store instance.
+  const apiKey = groqApiKey;
   if (!canUseCloudCleanup(settings, apiKey)) {
     return postProcessToneOutput(rawText, toneId);
   }
 
-  const groq = getClient(apiKey);
   const config = toneId
     ? getGlobalStyleConfig(toneId)
     : {
@@ -138,34 +124,56 @@ export async function cleanupText(
       };
 
   try {
-    const response = await groq.chat.completions.create({
-      model: config.model,
-      messages: [
-        {
-          role: 'system',
-          content: buildSystemPrompt(toneId, config.prompt, settings, transcriptLanguage),
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CLEANUP_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(GROQ_CHAT_COMPLETIONS_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey.replace(/\s+/g, '')}`,
+          'Content-Type': 'application/json',
         },
-        {
-          role: 'user',
-          content: `Dictated text to rewrite exactly as instructed below:
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: config.model,
+          messages: [
+            {
+              role: 'system',
+              content: buildSystemPrompt(toneId, config.prompt, settings, transcriptLanguage),
+            },
+            {
+              role: 'user',
+              content: `Dictated text to rewrite exactly as instructed below:
 <<<DICTATION
 ${rawText}
 DICTATION>>>`,
-        },
-      ],
-      max_tokens: Math.min(Math.max(256, rawText.length * 2), 8192),
-      temperature: config.temperature,
-    });
+            },
+          ],
+          max_tokens: Math.min(Math.max(256, rawText.length * 2), 8192),
+          temperature: config.temperature,
+        }),
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
-    const cleaned = response.choices[0].message.content?.trim() || rawText;
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(errorText || `Groq cleanup failed with HTTP ${response.status}`);
+    }
+
+    const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+
+    const cleaned = payload.choices?.[0]?.message?.content?.trim() || rawText;
     if (looksLikeAssistantReply(rawText, cleaned)) {
       console.warn('[cleanup] Discarded assistant-style cleanup response and kept raw dictation.');
       return postProcessToneOutput(rawText, toneId);
     }
 
     return postProcessToneOutput(cleaned, toneId);
-  } catch (error: any) {
-    console.warn('[cleanup] AI cleanup failed:', error?.message || error);
+  } catch (error: unknown) {
+    console.warn('[cleanup] AI cleanup failed:', error instanceof Error ? error.message : error);
     return postProcessToneOutput(rawText, toneId);
   }
 }

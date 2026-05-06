@@ -1,6 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { AppState, AppTab, DictionaryItemInput, DictationEntry, Settings, SnippetInput, SpeechMetrics } from '../shared/types';
 
+type UpdateStatusPayload = {
+  state: 'unsupported' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
+  version: string | null;
+  progress: number | null;
+  error: string | null;
+  lastCheckedAt: string | null;
+};
+
 const initialTheme = 'light';
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -9,6 +17,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 contextBridge.exposeInMainWorld('api', {
   getInitialTheme: () => initialTheme,
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (s: Partial<Settings>) => ipcRenderer.invoke('save-settings', s),
   suspendHotkey: () => ipcRenderer.invoke('suspend-hotkey'),
@@ -92,10 +101,14 @@ contextBridge.exposeInMainWorld('api', {
   reportRendererError: (scope: string, message: string, stack?: string) =>
     ipcRenderer.send('report-renderer-error', { scope, message, stack }),
 
-  onUpdateReady: (cb: () => void) => {
-    const fn = () => cb();
-    ipcRenderer.on('update-ready', fn);
-    return () => ipcRenderer.removeListener('update-ready', fn);
+  updateGetStatus: () => ipcRenderer.invoke('update-get-status'),
+  updateCheck: () => ipcRenderer.invoke('update-check'),
+  updateDownload: () => ipcRenderer.invoke('update-download'),
+  updateInstall: () => ipcRenderer.invoke('update-install'),
+  onUpdateStatus: (cb: (status: UpdateStatusPayload) => void) => {
+    const fn = (_: unknown, status: UpdateStatusPayload) => cb(status);
+    ipcRenderer.on('update-status', fn);
+    return () => ipcRenderer.removeListener('update-status', fn);
   },
 
   onModelDownloadProgress: (cb: (state: string, progress?: { percent: number; bytesReceived: number; bytesTotal: number }, error?: string) => void) => {
@@ -107,4 +120,30 @@ contextBridge.exposeInMainWorld('api', {
   isSecureStorageAvailable: () => ipcRenderer.invoke('is-secure-storage-available'),
   setGroqApiKey: (key: string) => ipcRenderer.invoke('set-groq-api-key', key),
   clearGroqApiKey: () => ipcRenderer.invoke('clear-groq-api-key'),
+
+  // ─────────── Auth (Supabase-backed) ───────────
+  authConfigStatus: () => ipcRenderer.invoke('auth-config-status'),
+  authGetSession: () => ipcRenderer.invoke('auth-get-session'),
+  authSignIn: (email: string, password: string) => ipcRenderer.invoke('auth-sign-in', email, password),
+  authSignUp: (email: string, password: string, displayName?: string) =>
+    ipcRenderer.invoke('auth-sign-up', email, password, displayName),
+  authSignOut: () => ipcRenderer.invoke('auth-sign-out'),
+  authResetPassword: (email: string) => ipcRenderer.invoke('auth-reset-password', email),
+  authGoogleSignIn: () => ipcRenderer.invoke('auth-google-sign-in'),
+  authDeleteAccount: () => ipcRenderer.invoke('auth-delete-account'),
+  authUpdateDisplayName: (name: string) => ipcRenderer.invoke('auth-update-display-name', name),
+  onAuthState: (cb: (session: unknown | null) => void) => {
+    const fn = (_: unknown, session: unknown | null) => cb(session);
+    ipcRenderer.on('auth-state', fn);
+    return () => ipcRenderer.removeListener('auth-state', fn);
+  },
+
+  // ─────────── Cloud sync ───────────
+  syncGetStatus: () => ipcRenderer.invoke('sync-get-status'),
+  syncForce: () => ipcRenderer.invoke('sync-force'),
+  onSyncStatus: (cb: (payload: unknown) => void) => {
+    const fn = (_: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('sync-status', fn);
+    return () => ipcRenderer.removeListener('sync-status', fn);
+  },
 });

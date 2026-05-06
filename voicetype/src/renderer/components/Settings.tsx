@@ -1,6 +1,6 @@
-import { memo, startTransition, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { Settings as SettingsType } from '../../shared/types';
 import { getEffectiveLanguageSelection, LANGUAGE_OPTIONS } from '../../shared/languages';
 import {
@@ -12,20 +12,36 @@ import {
   normalizeHotkeyList,
 } from '../../shared/hotkey';
 import {
-  ChevronDown,
   Check,
+  Download,
   Search,
   Settings as SettingsIcon,
   Monitor,
   Globe2,
-  Minus,
+  Loader2,
+  RefreshCw,
   X,
   Pencil,
   Eye,
   EyeOff,
   Mic,
   Wifi,
+  UserCircle2,
 } from 'lucide-react';
+import AccountView from './Account';
+import { toast } from './toast/useToast';
+import type { UpdateStatusPayload } from '../api';
+import {
+  MODAL_BACKDROP_EXIT,
+  MODAL_BACKDROP_INITIAL,
+  MODAL_BACKDROP_OPEN,
+  MODAL_BACKDROP_TRANSITION,
+  MODAL_PANEL_INITIAL,
+  MODAL_PANEL_OPEN,
+  MODAL_PANEL_EXIT,
+  MODAL_OPEN_TRANSITION,
+  MODAL_CLOSE_TRANSITION,
+} from '../lib/modalMotion';
 
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
 const SUPPORTED_MOUSE_BUTTONS: Record<number, { accelerator: string; label: string }> = {
@@ -45,11 +61,6 @@ type SelectOption = {
   flag?: string;
   description?: string;
 };
-
-type CssModalPhase = 'closed' | 'enter' | 'open' | 'exit';
-const CSS_MODAL_EXIT_DURATION_MS = 95;
-const MODAL_OPEN_TRANSITION = { type: 'spring', duration: 0.18, bounce: 0.24 } as const;
-const MODAL_CLOSE_TRANSITION = { type: 'spring', duration: 0.095, bounce: 0.03 } as const;
 
 const languageOptions: SelectOption[] = LANGUAGE_OPTIONS.map((option) => ({
   value: option.id,
@@ -80,10 +91,7 @@ function summarizeSelectedLanguages(selectedValues: string[], autoDetectEnabled:
   return autoDetectEnabled ? 'Auto-detect all languages' : joinedLabels;
 }
 
-// Pure-CSS modal shell. Keeps the DOM mounted after the first open so
-// subsequent opens are compositor-only (no framer cold-start, no lag).
-// Mirrors the pattern used by the shared Dialog + ConfirmationModal.
-function CssModal({
+function SettingsModalShell({
   open,
   onClose,
   children,
@@ -100,39 +108,12 @@ function CssModal({
   onBackdropClick?: () => void;
   closeOnEscape?: boolean;
 }) {
-  const [phase, setPhase] = useState<CssModalPhase>('closed');
-
-  useLayoutEffect(() => {
-    let exitTimeout = 0;
-    let raf1 = 0;
-    let raf2 = 0;
-
-    if (open) {
-      // Two-step open so the backdrop fades 0 -> 1 alongside the panel
-      // animation instead of popping in instantly.
-      setPhase((current) => (current === 'open' ? current : 'enter'));
-      raf1 = requestAnimationFrame(() => {
-        raf2 = requestAnimationFrame(() => setPhase('open'));
-      });
-    } else {
-      setPhase((current) => (current === 'closed' ? current : 'exit'));
-      exitTimeout = window.setTimeout(() => {
-        setPhase('closed');
-      }, CSS_MODAL_EXIT_DURATION_MS);
-    }
-
-    return () => {
-      window.clearTimeout(exitTimeout);
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-    };
-  }, [open]);
-
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (!closeOnEscape) return;
+      if (document.querySelector('[data-confirmation-modal="true"]')) return;
       event.stopPropagation();
       onClose();
     };
@@ -140,37 +121,40 @@ function CssModal({
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [open, onClose, closeOnEscape]);
 
-  const isVisible = open || phase !== 'closed';
-  const isInteractive = phase === 'open';
-
-  if (!isVisible) return null;
-
-  const backdropOpacity = phase === 'open' ? 1 : 0;
-
   const modalContent = (
-    <div
-      className={`fixed inset-0 flex items-center justify-center ${
-        isInteractive ? 'pointer-events-auto' : 'pointer-events-none'
-      }`}
-      style={{ zIndex }}
-      aria-hidden={!isVisible}
-      onClick={() => (onBackdropClick ?? onClose)()}
-    >
-      <div
-        className="absolute inset-0 bg-black/15"
-        style={{ opacity: backdropOpacity, transition: 'opacity 160ms ease-out' }}
-      />
-      <motion.div
-        className={`settings-modal-panel relative overflow-hidden rounded-2xl border border-border bg-background shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] transform-gpu ${panelClassName}`}
-        initial={{ opacity: 0, scale: 0.94, y: 14 }}
-        animate={phase === 'exit' ? { opacity: 0, scale: 0.97, y: 6 } : { opacity: 1, scale: 1, y: 0 }}
-        transition={phase === 'exit' ? MODAL_CLOSE_TRANSITION : MODAL_OPEN_TRANSITION}
-        style={{ willChange: 'opacity, transform' }}
-        onClick={(e: React.MouseEvent) => e.stopPropagation()}
-      >
-        {children}
-      </motion.div>
-    </div>
+    <AnimatePresence initial={false}>
+      {open ? (
+        <motion.div
+          key="settings-modal"
+          className="fixed inset-0 flex items-center justify-center"
+          style={{ zIndex }}
+          aria-hidden={false}
+          initial={{ opacity: 1 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 1 }}
+          onClick={() => (onBackdropClick ?? onClose)()}
+        >
+          <motion.div
+            className="absolute inset-0 bg-black/15"
+            initial={MODAL_BACKDROP_INITIAL}
+            animate={MODAL_BACKDROP_OPEN}
+            exit={MODAL_BACKDROP_EXIT}
+            transition={MODAL_BACKDROP_TRANSITION}
+          />
+          <motion.div
+            className={`settings-modal-panel relative overflow-hidden rounded-2xl border border-border bg-background shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] transform-gpu ${panelClassName}`}
+            initial={MODAL_PANEL_INITIAL}
+            animate={MODAL_PANEL_OPEN}
+            exit={{ ...MODAL_PANEL_EXIT, transition: MODAL_CLOSE_TRANSITION }}
+            transition={MODAL_OPEN_TRANSITION}
+            style={{ willChange: 'opacity, transform' }}
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          >
+            {children}
+          </motion.div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
   );
 
   return createPortal(modalContent, document.body);
@@ -539,6 +523,9 @@ export default memo(function SettingsView({
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
   const [isLanguageModalOpen, setIsLanguageModalOpen] = useState(false);
   const [isMicrophoneModalOpen, setIsMicrophoneModalOpen] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatusPayload | null>(null);
+  const [updateActionPending, setUpdateActionPending] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
   const hasChildModalOpenRef = useRef(false);
   const deferredSettingsQuery = useDeferredValue(settingsQuery);
   const appVisibilityLabel = navigator.platform.toLowerCase().includes('mac')
@@ -563,7 +550,7 @@ export default memo(function SettingsView({
     if (isOpen) return;
 
     if (captureTarget) {
-      void (window as any).api.resumeHotkey();
+      void window.api.resumeHotkey();
       setCaptureTarget(null);
     }
     setIsShortcutsModalOpen(false);
@@ -576,7 +563,7 @@ export default memo(function SettingsView({
   useEffect(() => {
     return () => {
       if (captureTarget) {
-        void (window as any).api.resumeHotkey();
+        void window.api.resumeHotkey();
       }
     };
   }, [captureTarget]);
@@ -585,7 +572,7 @@ export default memo(function SettingsView({
     if (!isOpen) return;
 
     if (!isShortcutsModalOpen && captureTarget) {
-      void (window as any).api.resumeHotkey();
+      void window.api.resumeHotkey();
       setCaptureTarget(null);
     }
   }, [captureTarget, isOpen, isShortcutsModalOpen]);
@@ -609,21 +596,35 @@ export default memo(function SettingsView({
         nextHotkeys[activeCapture.index] = requestedHotkey;
       }
 
-      await onUpdateSettings({ [targetField]: nextHotkeys });
-      const savedSettings = await (window as any).api.getSettings();
+      try {
+        await onUpdateSettings({ [targetField]: nextHotkeys });
+      } catch (err) {
+        console.error('Failed to save hotkey:', err);
+        setCaptureTarget(null);
+        toast.error(`Could not save "${label}". Try again.`);
+        return;
+      }
+      const savedSettings = await window.api.getSettings();
       const savedValue = getHotkeysForTarget(targetField, savedSettings);
       setCaptureTarget(null);
 
       if (!savedValue.includes(requestedHotkey)) {
+        // OS-level registration rejected the combo (e.g. another app owns
+        // it, or the OS reserves it). Surface as a toast so the user sees
+        // it even if they've already moved focus, and keep the inline
+        // message for context inside the form.
+        const message = `"${label}" is unavailable. Try a different shortcut.`;
         setHotkeyMessages((current) => ({
           ...current,
           [targetField]: `Shortcut unavailable. Saved shortcuts: ${savedValue.map((value: string) => formatHotkeyLabel(value)).join(', ')}.`,
         }));
+        toast.error(message);
       } else {
         setHotkeyMessages((current) => ({
           ...current,
           [targetField]: `${isAdding ? 'Added' : 'Updated'} ${label}.`,
         }));
+        toast.success(`"${label}" ${isAdding ? 'added successfully' : 'updated'}`);
       }
     }
 
@@ -633,7 +634,7 @@ export default memo(function SettingsView({
 
       if (event.key === 'Escape' && activeCapture.field !== 'cancelHotkey') {
         setCaptureTarget(null);
-        (window as any).api.resumeHotkey();
+        window.api.resumeHotkey();
         return;
       }
 
@@ -646,7 +647,9 @@ export default memo(function SettingsView({
       const result = buildComboHotkeyFromEvent(event, activeCapture.field);
       if ('pending' in result) return;
       if (!result.valid) {
-        setHotkeyMessages((current) => ({ ...current, [activeCapture.field]: result.reason }));
+        const reason = result.reason ?? 'Invalid shortcut. Try a different key combination.';
+        setHotkeyMessages((current) => ({ ...current, [activeCapture.field]: reason }));
+        toast.error(reason);
         return;
       }
       await commitHotkey(result.accelerator, result.label);
@@ -676,7 +679,9 @@ export default memo(function SettingsView({
 
       const result = buildMouseHotkeyFromEvent(event);
       if (!result.valid) {
-        setHotkeyMessages((current) => ({ ...current, [activeCapture.field]: result.reason }));
+        const reason = result.reason ?? 'Invalid mouse button.';
+        setHotkeyMessages((current) => ({ ...current, [activeCapture.field]: reason }));
+        toast.error(reason);
         return;
       }
 
@@ -695,6 +700,55 @@ export default memo(function SettingsView({
 
   const handleAppInDockToggle = (checked: boolean) => {
     onUpdateSettings({ showAppInDock: checked });
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void window.api.getAppVersion().then((version) => {
+      if (!cancelled) {
+        setAppVersion(version);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setAppVersion('');
+      }
+    });
+
+    void window.api.updateGetStatus().then((status) => {
+      if (!cancelled) {
+        setUpdateStatus(status);
+      }
+    }).catch((error) => {
+      console.error('Failed to load update status:', error);
+    });
+
+    const unsubscribe = window.api.onUpdateStatus((status) => {
+      setUpdateStatus(status);
+      setUpdateActionPending(false);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  const handleUpdateAction = async (action: 'check' | 'download' | 'install') => {
+    setUpdateActionPending(true);
+    try {
+      if (action === 'check') {
+        await window.api.updateCheck();
+      } else if (action === 'download') {
+        await window.api.updateDownload();
+      } else {
+        await window.api.updateInstall();
+      }
+    } catch (error) {
+      console.error('Update action failed:', error);
+      toast.error('Could not start the update action. Try again.');
+      setUpdateActionPending(false);
+    }
   };
 
   const toggleHotkeys = useMemo(
@@ -717,16 +771,16 @@ export default memo(function SettingsView({
     }
 
     if (captureTarget?.field === target && captureTarget.index === index) {
-      (window as any).api.resumeHotkey();
+      window.api.resumeHotkey();
       setCaptureTarget(null);
       return;
     }
 
     if (captureTarget) {
-      (window as any).api.resumeHotkey();
+      window.api.resumeHotkey();
     }
 
-    (window as any).api.suspendHotkey();
+    window.api.suspendHotkey();
     setCaptureTarget({ field: target, index });
   };
 
@@ -735,7 +789,7 @@ export default memo(function SettingsView({
     if (currentHotkeys.length <= 1) return;
 
     if (captureTarget?.field === target && captureTarget.index === index) {
-      (window as any).api.resumeHotkey();
+      window.api.resumeHotkey();
       setCaptureTarget(null);
     }
 
@@ -749,7 +803,7 @@ export default memo(function SettingsView({
 
   const closeShortcutsModal = async () => {
     if (captureTarget) {
-      await (window as any).api.resumeHotkey();
+      await window.api.resumeHotkey();
       setCaptureTarget(null);
     }
     setIsShortcutsModalOpen(false);
@@ -776,6 +830,7 @@ export default memo(function SettingsView({
       if (event.key === 'Escape'
         && !captureTarget
         && !hasChildModalOpenRef.current
+        && !document.querySelector('[data-confirmation-modal="true"]')
       ) {
         onClose();
       }
@@ -787,7 +842,7 @@ export default memo(function SettingsView({
 
   const resetShortcutDefaults = async () => {
     if (captureTarget) {
-      await (window as any).api.resumeHotkey();
+      await window.api.resumeHotkey();
       setCaptureTarget(null);
     }
 
@@ -853,6 +908,7 @@ export default memo(function SettingsView({
   const sidebarItems: Array<{ id: string; icon: ReactNode; label: string }> = [
     { id: 'General', icon: <SettingsIcon size={16} />, label: 'General' },
     { id: 'System', icon: <Monitor size={16} />, label: 'System' },
+    { id: 'Account', icon: <UserCircle2 size={16} />, label: 'Account' },
   ];
 
   const normalizedSettingsQuery = deferredSettingsQuery.trim().toLowerCase();
@@ -885,22 +941,25 @@ export default memo(function SettingsView({
     'auto detect',
     selectedLanguageSummary
   );
-  const showGeneralMode = matchesSettingsSearch(
-    'general',
+  // Transcription mode and the related Groq API key live in the System
+  // tab — they're configuration of *how the app talks to the cloud*
+  // rather than per-session preferences like microphone or shortcuts.
+  const showSystemMode = matchesSettingsSearch(
+    'system',
     'transcription mode',
     'local',
     'cloud',
     'cleanup'
   );
-  const showGeneralCloudKey = matchesSettingsSearch(
-    'general',
+  const showSystemCloudKey = matchesSettingsSearch(
+    'system',
     'cloud api key',
     'api key',
     'groq',
     'cloud transcription',
     'cloud cleanup'
   );
-  const hasGeneralMatches = showGeneralShortcuts || showGeneralMicrophone || showGeneralLanguages || showGeneralMode || showGeneralCloudKey;
+  const hasGeneralMatches = showGeneralShortcuts || showGeneralMicrophone || showGeneralLanguages;
 
   const showSystemLaunch = matchesSettingsSearch(
     'system',
@@ -927,18 +986,27 @@ export default memo(function SettingsView({
     'top',
     'bottom'
   );
-  const hasSystemMatches = showSystemLaunch || showSystemOverlay || showSystemVisibility || showSystemPosition;
+  const hasSystemMatches =
+    showSystemLaunch || showSystemOverlay || showSystemVisibility || showSystemPosition || showSystemMode || showSystemCloudKey;
+
+  // Account content is fetched live (session, sync status). It doesn't
+  // map onto any of the indexed labels, so a simple keyword check
+  // matches the Account section. Unlike General/System we don't
+  // hide internal rows here — the panel either shows or it doesn't.
+  const hasAccountMatches = matchesSettingsSearch('account', 'sign out', 'sync', 'delete account', 'profile', 'email');
 
   const filteredSidebarItems = sidebarItems.filter((item) => {
     if (!hasSettingsSearch) return true;
     if (item.id === 'General') return hasGeneralMatches;
     if (item.id === 'System') return hasSystemMatches;
+    if (item.id === 'Account') return hasAccountMatches;
     return item.label.toLowerCase().includes(normalizedSettingsQuery);
   });
 
   const categoryMeta: Record<string, { title: string }> = {
     General: { title: 'General' },
     System: { title: 'System' },
+    Account: { title: 'Account' },
   };
 
   const activeMeta = categoryMeta[activeCategory] ?? { title: 'Settings' };
@@ -951,12 +1019,12 @@ export default memo(function SettingsView({
   }, [activeCategory, filteredSidebarItems]);
 
   return (
-    <CssModal
+    <SettingsModalShell
       open={isOpen}
       onClose={onClose}
       zIndex={100}
       closeOnEscape={!hasChildModalOpen && !captureTarget}
-      panelClassName="flex h-[min(680px,calc(100vh-48px))] w-[min(1000px,calc(100vw-40px))]"
+      panelClassName="flex h-[min(680px,calc(100vh-48px))] w-[min(980px,calc(100vw-48px))]"
     >
         {/* Sidebar */}
         <aside className="flex w-[220px] shrink-0 flex-col border-r border-border bg-muted/55 px-3 pt-6 pb-4">
@@ -994,6 +1062,12 @@ export default memo(function SettingsView({
               </div>
             )}
           </div>
+          <SidebarUpdateControl
+            appVersion={appVersion}
+            status={updateStatus}
+            pending={updateActionPending}
+            onAction={handleUpdateAction}
+          />
         </aside>
 
         {/* Content Area */}
@@ -1027,8 +1101,12 @@ export default memo(function SettingsView({
                         <div className="flex items-center justify-between px-5 py-4">
                           <div>
                             <div className="text-base font-semibold text-foreground">Shortcuts</div>
-                            <div className="mt-0.5 text-sm text-muted-foreground">
-                              Hold <span className="font-semibold text-foreground">{formatHotkeyLabel(settings.pushToTalkHotkey?.[0] ?? DEFAULT_PUSH_TO_TALK_HOTKEY)}</span> and speak.{' '}
+                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+                              <span>Hold</span>
+                              <span className="settings-hotkey-chip inline-flex min-h-[28px] items-center justify-center px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#1E3A5F]">
+                                {formatHotkeyLabel(settings.pushToTalkHotkey?.[0] ?? DEFAULT_PUSH_TO_TALK_HOTKEY)}
+                              </span>
+                              <span>and speak.</span>
                             </div>
                           </div>
                           <button onMouseDown={(event) => event.preventDefault()} onClick={() => setIsShortcutsModalOpen(true)} className="settings-action-button h-8 rounded-md px-7 text-sm font-medium text-foreground transition-colors">Change</button>
@@ -1047,7 +1125,7 @@ export default memo(function SettingsView({
                             <button onMouseDown={(event) => event.preventDefault()} onClick={() => setIsMicrophoneModalOpen(true)} className="settings-action-button h-8 rounded-md px-7 text-sm font-medium text-foreground transition-colors">Change</button>
                           </div>
                           <div className="mt-3">
-                            <MicTestButton devices={devices} selectedMic={settings.microphoneId} />
+                            <MicTestButton selectedMic={settings.microphoneId} />
                           </div>
                         </div>
                       )}
@@ -1066,59 +1144,9 @@ export default memo(function SettingsView({
                     </div>
                   )}
 
-                  {(showGeneralMode || showGeneralCloudKey) && (
-                    <div className="rounded-xl border border-border bg-background">
-                      {showGeneralMode && (
-                        <RowV2
-                          label="Transcription mode"
-                          description="Local stays on-device. Cloud uses Groq for transcription and cleanup."
-                        >
-                          <ModeToggle
-                            value={settings.useCloudTranscription ? 'cloud' : 'local'}
-                            cloudEnabled={hasGroqKey}
-                            onChange={(value) => onUpdateSettings({ useCloudTranscription: value === 'cloud' })}
-                          />
-                        </RowV2>
-                      )}
-
-                      {showGeneralMode && showCloudKeyWarning && (
-                        <div className="px-5 pb-3">
-                          <div className="rounded-lg border border-border bg-destructive/5 px-3 py-2 text-sm font-medium text-foreground">
-                            Cloud mode is selected, but no Groq API key is saved.
-                          </div>
-                        </div>
-                      )}
-
-                      {showGeneralMode && showGeneralCloudKey && <div className="mx-5 h-px bg-foreground/5" />}
-
-                      {showGeneralCloudKey && (
-                        <div className="px-5 py-4">
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0">
-                              <div className="text-base font-semibold text-foreground">Cloud API key (Groq)</div>
-                              <div className="mt-0.5 text-sm text-muted-foreground">Required for Cloud transcription and cloud cleanup.</div>
-                            </div>
-                            <button type="button" onClick={() => (window as any).api.openApiKeyPage()} className="settings-action-button h-8 shrink-0 rounded-md px-5 text-sm font-medium text-foreground transition-colors">Get key</button>
-                          </div>
-                          <div className="mt-3">
-                            <ApiKeyInput
-                              value={settings.groqApiKey ?? ''}
-                              onSave={async (key) => {
-                                if (key) {
-                                  await (window as any).api.setGroqApiKey(key);
-                                  if (onUpdateSettings) void onUpdateSettings({});
-                                } else {
-                                  await (window as any).api.clearGroqApiKey();
-                                  if (onUpdateSettings) void onUpdateSettings({});
-                                }
-                              }}
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
+              ) : activeCategory === 'Account' && hasAccountMatches ? (
+                <AccountView />
               ) : activeCategory === 'System' && hasSystemMatches ? (
                 <div className="space-y-6">
                   <section>
@@ -1156,6 +1184,90 @@ export default memo(function SettingsView({
                       )}
                     </div>
                   </section>
+
+                  {(showSystemMode || showSystemCloudKey) && (
+                    <section>
+                      <h2 className="mb-3 text-base font-semibold text-foreground">Transcription</h2>
+                      <div className="rounded-xl border border-border bg-background">
+                        {showSystemMode && (
+                          <RowV2
+                            label="Transcription mode"
+                            description="Local stays on-device. Cloud uses Groq for transcription and cleanup."
+                          >
+                            <ModeToggle
+                              value={settings.useCloudTranscription ? 'cloud' : 'local'}
+                              cloudEnabled={hasGroqKey}
+                              onChange={(value) => onUpdateSettings({ useCloudTranscription: value === 'cloud' })}
+                            />
+                          </RowV2>
+                        )}
+
+                        {showSystemMode && showCloudKeyWarning && (
+                          <div className="px-5 pb-3">
+                            <div className="rounded-lg border border-border bg-destructive/5 px-3 py-2 text-sm font-medium text-foreground">
+                              Cloud mode is selected, but no Groq API key is saved.
+                            </div>
+                          </div>
+                        )}
+
+                        {showSystemMode && showSystemCloudKey && <div className="mx-5 h-px bg-foreground/5" />}
+
+                        {showSystemCloudKey && (
+                          <div className="px-5 py-4">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <div className="text-base font-semibold text-foreground">Cloud API key (Groq)</div>
+                                <div className="mt-0.5 text-sm text-muted-foreground">Required for Cloud transcription and cloud cleanup.</div>
+                              </div>
+                              <button type="button" onClick={() => window.api.openApiKeyPage()} className="settings-action-button h-8 shrink-0 rounded-md px-5 text-sm font-medium text-foreground transition-colors">Get key</button>
+                            </div>
+                            <div className="mt-3">
+                              <ApiKeyInput
+                                value={settings.groqApiKey ?? ''}
+                                onSave={async (key) => {
+                                  // Clearing the key never needs validation.
+                                  if (!key) {
+                                    try {
+                                      await window.api.clearGroqApiKey();
+                                      toast.success('API key removed');
+                                      if (onUpdateSettings) void onUpdateSettings({});
+                                    } catch (err) {
+                                      console.error('Failed to clear API key:', err);
+                                      toast.error('Could not remove API key. Try again.');
+                                    }
+                                    return;
+                                  }
+
+                                  // Verify against Groq BEFORE persisting so
+                                  // a typo'd / non-Groq key never gets saved
+                                  // and silently confirmed. The main-process
+                                  // `set-groq-api-key` IPC has no built-in
+                                  // verification — we have to gate it here.
+                                  try {
+                                    const result = await window.api.testGroqApiKey(key);
+                                    if (!result?.ok) {
+                                      const reason = (result?.error as string | undefined)?.trim();
+                                      toast.error(reason
+                                        ? `API key was rejected: ${reason}`
+                                        : 'That key was rejected by Groq. Check the value and try again.');
+                                      return;
+                                    }
+                                    await window.api.setGroqApiKey(key);
+                                    toast.success('API key saved');
+                                    if (onUpdateSettings) void onUpdateSettings({});
+                                  } catch (err) {
+                                    console.error('Failed to save API key:', err);
+                                    const reason = (err as { message?: string })?.message?.trim();
+                                    toast.error(reason || 'Could not save API key. Check the value and try again.');
+                                  }
+                                }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  )}
                 </div>
               ) : null}
             </div>
@@ -1200,9 +1312,74 @@ export default memo(function SettingsView({
             closeMicrophoneModal();
           }}
         />
-    </CssModal>
+    </SettingsModalShell>
   );
 });
+
+function SidebarUpdateControl({
+  appVersion,
+  status,
+  pending,
+  onAction,
+}: {
+  appVersion: string;
+  status: UpdateStatusPayload | null;
+  pending: boolean;
+  onAction: (action: 'check' | 'download' | 'install') => Promise<void>;
+}) {
+  const state = status?.state ?? 'checking';
+  const isChecking = state === 'checking';
+  const isDownloading = state === 'downloading';
+  const isBusy = pending || isChecking || isDownloading;
+  const progress = typeof status?.progress === 'number' ? status.progress : 0;
+
+  let action: 'check' | 'download' | 'install' = 'check';
+  let actionLabel = 'Check for updates';
+  let Icon = RefreshCw;
+
+  if (state === 'unsupported') {
+    actionLabel = 'Updates unavailable';
+  } else if (state === 'idle') {
+    actionLabel = 'Check again';
+  } else if (state === 'checking') {
+    actionLabel = 'Checking';
+    Icon = Loader2;
+  } else if (state === 'available') {
+    action = 'download';
+    actionLabel = 'Download update';
+    Icon = Download;
+  } else if (state === 'downloading') {
+    actionLabel = `Downloading ${progress}%`;
+    Icon = Loader2;
+  } else if (state === 'ready') {
+    action = 'install';
+    actionLabel = 'Restart to install';
+  }
+
+  const disabled = state === 'unsupported' || isBusy;
+
+  return (
+    <div className="mt-4 border-t border-foreground/[0.04] px-3 pt-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-medium text-foreground">
+            Echo{appVersion ? ` v${appVersion}` : ''}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void onAction(action)}
+          disabled={disabled}
+          aria-label={actionLabel}
+          title={actionLabel}
+          className="settings-action-button inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-foreground transition-colors disabled:cursor-default disabled:opacity-45"
+        >
+          <Icon size={15} className={isChecking || isDownloading ? 'animate-spin' : undefined} />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function RowV2({
   label,
@@ -1328,9 +1505,9 @@ function ApiKeyInput({
     setTestResult(null);
     try {
       const result = isDirty
-        ? await (window as any).api.testGroqApiKey(trimmedDraft)
+        ? await window.api.testGroqApiKey(trimmedDraft)
         : hasSavedKey
-          ? await (window as any).api.testSavedGroqApiKey()
+          ? await window.api.testSavedGroqApiKey()
           : { ok: false as const, error: 'No saved API key.' };
       setTestResult(result.ok ? 'success' : 'error');
     } catch {
@@ -1448,7 +1625,7 @@ function ShortcutsModal({
   };
 
   return (
-    <CssModal
+    <SettingsModalShell
       open={open}
       onClose={handleClose}
       panelClassName="w-full max-w-[620px] max-h-[calc(100vh-48px)] overflow-y-auto"
@@ -1474,7 +1651,7 @@ function ShortcutsModal({
           </button>
         </div>
       </div>
-    </CssModal>
+    </SettingsModalShell>
   );
 }
 
@@ -1562,7 +1739,7 @@ function LanguageModal({
   };
 
   return (
-    <CssModal
+    <SettingsModalShell
       open={open}
       onClose={onClose}
       panelClassName="flex h-[min(580px,calc(100vh-88px))] w-[min(780px,calc(100vw-40px))] flex-col"
@@ -1659,7 +1836,7 @@ function LanguageModal({
           </div>
         </div>
       </div>
-    </CssModal>
+    </SettingsModalShell>
   );
 }
 
@@ -1677,7 +1854,7 @@ function MicrophoneModal({
   onSave: (id: string) => Promise<void>;
 }) {
   return (
-    <CssModal
+    <SettingsModalShell
       open={open}
       onClose={onClose}
       panelClassName="flex w-full max-w-[560px] max-h-[calc(100vh-40px)] flex-col"
@@ -1711,7 +1888,7 @@ function MicrophoneModal({
           );
         })}
       </div>
-    </CssModal>
+    </SettingsModalShell>
   );
 }
 
@@ -1794,7 +1971,7 @@ function ShortcutCard({
   );
 }
 
-function MicTestButton({ devices, selectedMic }: { devices: MediaDeviceInfo[]; selectedMic: string }) {
+function MicTestButton({ selectedMic }: { selectedMic: string }) {
   const [testing, setTesting] = useState(false);
   const [bars, setBars] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
   const [error, setError] = useState('');
@@ -1848,8 +2025,6 @@ function MicTestButton({ devices, selectedMic }: { devices: MediaDeviceInfo[]; s
       const binSize = audioContext.sampleRate / analyser.fftSize;
       const voiceStartBin = Math.floor(60 / binSize);
       const voiceEndBin = Math.floor(8000 / binSize);
-      const voiceRange = voiceEndBin - voiceStartBin;
-      const binsPerBar = Math.floor(voiceRange / BAR_COUNT);
 
       const tick = () => {
         analyser.getByteFrequencyData(freqData);
@@ -1890,8 +2065,8 @@ function MicTestButton({ devices, selectedMic }: { devices: MediaDeviceInfo[]; s
         animFrameRef.current = requestAnimationFrame(tick);
       };
       tick();
-    } catch (err: any) {
-      setError(err?.message || 'Microphone access denied');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Microphone access denied');
       stopTesting();
     }
   };

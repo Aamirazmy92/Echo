@@ -2,8 +2,15 @@ import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, Keyboard, Sparkles, ChevronRight, Check, Pencil, X } from 'lucide-react';
 import { Settings } from '../../shared/types';
-import { DEFAULT_PUSH_TO_TALK_HOTKEY, DEFAULT_TOGGLE_HOTKEY, formatHotkeyLabel, normalizeHotkeyList, normalizeHotkeyAccelerator } from '../../shared/hotkey';
+import { DEFAULT_PUSH_TO_TALK_HOTKEY, DEFAULT_TOGGLE_HOTKEY, formatHotkeyLabel, normalizeHotkeyAccelerator } from '../../shared/hotkey';
 import { fadeTransition, panelTransition } from '../lib/motion';
+import {
+  MODAL_CLOSE_TRANSITION,
+  MODAL_OPEN_TRANSITION,
+  MODAL_PANEL_EXIT,
+  MODAL_PANEL_INITIAL,
+  MODAL_PANEL_OPEN,
+} from '../lib/modalMotion';
 
 interface OnboardingProps {
   settings: Settings;
@@ -134,27 +141,23 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
   const [toggleHotkey, setToggleHotkey] = useState<string[]>(settings.toggleHotkey ?? [DEFAULT_TOGGLE_HOTKEY]);
   const [captureTarget, setCaptureTarget] = useState<{ field: 'toggleHotkey' | 'pushToTalkHotkey'; index: number } | null>(null);
   const [hotkeyMessage, setHotkeyMessage] = useState('');
+  const [isClosing, setIsClosing] = useState(false);
 
   const current = STEPS[step];
   const isLast = step === STEPS.length - 1;
 
   const handleNext = useCallback(() => {
+    if (isClosing) return;
     if (isLast) {
       if (captureTarget) {
-        (window as any).api.resumeHotkey();
+        window.api.resumeHotkey();
         setCaptureTarget(null);
       }
-      onComplete({
-        onboardingComplete: true,
-        microphoneId: selectedMic,
-        microphoneLabel: selectedMicLabel,
-        pushToTalkHotkey: pushToTalkHotkey,
-        toggleHotkey: toggleHotkey,
-      });
+      setIsClosing(true);
     } else {
       setStep(s => s + 1);
     }
-  }, [isLast, selectedMic, selectedMicLabel, pushToTalkHotkey, toggleHotkey, onComplete, captureTarget]);
+  }, [isLast, isClosing, captureTarget]);
 
   const handleMicSelect = (deviceId: string, label: string) => {
     setSelectedMic(deviceId);
@@ -168,17 +171,17 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
     }
 
     if (captureTarget?.field === target && captureTarget.index === index) {
-      await (window as any).api.resumeHotkey();
+      await window.api.resumeHotkey();
       setCaptureTarget(null);
       setHotkeyMessage('Hotkey capture cancelled.');
       return;
     }
 
     if (captureTarget) {
-      await (window as any).api.resumeHotkey();
+      await window.api.resumeHotkey();
     }
 
-    await (window as any).api.suspendHotkey();
+    await window.api.suspendHotkey();
     setCaptureTarget({ field: target, index });
   };
 
@@ -187,7 +190,7 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
     if (currentHotkeys.length <= 1) return;
 
     if (captureTarget?.field === target && captureTarget.index === index) {
-      await (window as any).api.resumeHotkey();
+      await window.api.resumeHotkey();
       setCaptureTarget(null);
     }
 
@@ -202,7 +205,7 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
 
   const handleReset = async () => {
     if (captureTarget) {
-      await (window as any).api.resumeHotkey();
+      await window.api.resumeHotkey();
       setCaptureTarget(null);
     }
     setPushToTalkHotkey([DEFAULT_PUSH_TO_TALK_HOTKEY]);
@@ -213,7 +216,7 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
   useEffect(() => {
     if (step !== 2) {
       if (captureTarget) {
-        (window as any).api.resumeHotkey();
+        window.api.resumeHotkey();
         setCaptureTarget(null);
       }
     }
@@ -255,7 +258,7 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
         setToggleHotkey(updatedHotkeys);
       }
 
-      (window as any).api.resumeHotkey();
+      window.api.resumeHotkey();
       setCaptureTarget(null);
       setHotkeyMessage('Hotkey saved.');
     };
@@ -267,16 +270,24 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
   return (
     <motion.div
       initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={fadeTransition}
+      animate={{ opacity: isClosing ? 0 : 1 }}
+      transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
       className="fixed inset-0 z-[200] flex items-center justify-center bg-[rgba(6,11,21,0.72)]"
     >
       <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-        transition={panelTransition}
+        initial={MODAL_PANEL_INITIAL}
+        animate={isClosing ? MODAL_PANEL_EXIT : MODAL_PANEL_OPEN}
+        transition={isClosing ? MODAL_CLOSE_TRANSITION : MODAL_OPEN_TRANSITION}
+        onAnimationComplete={() => {
+          if (!isClosing) return;
+          onComplete({
+            onboardingComplete: true,
+            microphoneId: selectedMic,
+            microphoneLabel: selectedMicLabel,
+            pushToTalkHotkey,
+            toggleHotkey,
+          });
+        }}
         className="theme-card relative flex w-full max-w-[460px] flex-col overflow-hidden rounded-[28px] shadow-2xl"
       >
         {/* Progress bar */}
@@ -430,7 +441,7 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
                 type="button"
                 onClick={() => {
                   if (captureTarget) {
-                    (window as any).api.resumeHotkey();
+                    window.api.resumeHotkey();
                   }
                   setCaptureTarget(null);
                   setStep(step - 1);
@@ -445,6 +456,7 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
             <button
               type="button"
               onClick={handleNext}
+              disabled={isClosing}
               className="theme-button-primary flex items-center gap-2 px-6 text-[13px] font-semibold"
             >
               {isLast ? 'Get started' : 'Continue'}

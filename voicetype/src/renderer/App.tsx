@@ -10,19 +10,22 @@ import {
   Type,
   BarChart3,
   Settings as SettingsIcon,
-  AudioLines,
   PanelLeft,
   type LucideIcon,
 } from 'lucide-react';
-import Toast, { type ToastType } from './components/Toast';
+import ToastHost from './components/toast/ToastHost';
+import { toast as toastDispatch, type ToastType } from './components/toast/useToast';
+import echoLogoUrl from './assets/echo-logo.png';
 import { AppState, AppTab, SpeechMetrics, Settings as SettingsType } from '../shared/types';
-import {
-  DEFAULT_PUSH_TO_TALK_HOTKEY,
-  DEFAULT_TOGGLE_HOTKEY,
-  formatHotkeyLabel,
-} from '../shared/hotkey';
 import DashboardView from './components/Dashboard';
 import Onboarding from './components/Onboarding';
+import MotionWarmup from './components/MotionWarmup';
+import UpdateNotch from './components/UpdateNotch';
+
+type IdleWindow = Window & typeof globalThis & {
+  requestIdleCallback?: (callback: () => void) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
 
 let settingsViewImportPromise: Promise<typeof import('./components/Settings')> | null = null;
 let historyViewImportPromise: Promise<typeof import('./components/History')> | null = null;
@@ -76,7 +79,7 @@ const SnippetsView = lazy(loadSnippetsView);
 const StyleView = lazy(loadStyleView);
 const InsightsView = lazy(loadInsightsView);
 
-function SidebarIcon({ icon: Icon, active }: { icon: LucideIcon; active: boolean }) {
+function SidebarIcon({ icon: Icon }: { icon: LucideIcon }) {
   return (
     <span className="flex h-7 w-7 items-center justify-center">
       <Icon
@@ -96,19 +99,6 @@ const OFFLINE_SAMPLE_RATE = 16000;
 const APP_ERROR_RESET_MS = 4_000;
 const RECORDER_STOP_TIMEOUT_MS = 4_000;
 const PROCESSING_TIMEOUT_MS = 30_000;
-
-function mergeFloat32Chunks(chunks: Float32Array[]): Float32Array {
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const merged = new Float32Array(totalLength);
-  let offset = 0;
-
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return merged;
-}
 
 function downsampleFloat32Buffer(
   input: Float32Array,
@@ -209,18 +199,12 @@ async function decodeRecordedAudioToMono(
 }
 
 export default function App() {
-  const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
-  const [appState, setAppState] = useState<AppState>('idle');
   const [activeTab, setActiveTab] = useState<AppTab>('dashboard');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSettingsViewMounted, setIsSettingsViewMounted] = useState(false);
   const [isSidebarCompact, setIsSidebarCompact] = useState(false);
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [shortcutLabels, setShortcutLabels] = useState({
-    toggle: formatHotkeyLabel(DEFAULT_TOGGLE_HOTKEY),
-    pushToTalk: formatHotkeyLabel(DEFAULT_PUSH_TO_TALK_HOTKEY),
-  });
   const appStateRef = useRef<AppState>('idle');
   const settingsRef = useRef<SettingsType | null>(null);
   const devicesLoadedRef = useRef(false);
@@ -241,24 +225,22 @@ export default function App() {
   const startAttemptRef = useRef(0);
   const processingTimeoutRef = useRef<number | null>(null);
   const recorderStopTimeoutRef = useRef<number | null>(null);
-  const [isMaximized, setIsMaximized] = useState(false);
 
   const updateAppState = (state: AppState) => {
     appStateRef.current = state;
-    setAppState(state);
   };
 
+  // Bridge to the new global toast dispatcher. Kept as a thin wrapper so
+  // the dozens of existing `showToast(...)` call sites in this file don't
+  // need to change shape. Anyone outside this component can call
+  // `toast.success(...) / toast.error(...)` directly from `useToast.ts`.
   const showToast = (message: string, type: ToastType = 'success') => {
-    setToast({ message, type });
+    toastDispatch[type](message);
   };
 
   const applySettingsSnapshot = useCallback((nextSettings: SettingsType) => {
     settingsRef.current = nextSettings;
     setSettings(nextSettings);
-    setShortcutLabels({
-      toggle: formatHotkeyLabel(nextSettings.toggleHotkey ?? [DEFAULT_TOGGLE_HOTKEY]),
-      pushToTalk: formatHotkeyLabel(nextSettings.pushToTalkHotkey ?? [DEFAULT_PUSH_TO_TALK_HOTKEY]),
-    });
   }, []);
 
   const ensureDevicesLoaded = useCallback(async () => {
@@ -281,13 +263,18 @@ export default function App() {
     }
 
     try {
-      const saved = await (window as any).api.saveSettings(partial);
+      const saved = await window.api.saveSettings(partial);
       applySettingsSnapshot(saved);
       return saved as SettingsType;
     } catch (error) {
       if (previous) {
         applySettingsSnapshot(previous);
       }
+      // Surface the failure as a toast so the optimistic-update rollback
+      // doesn't look like a no-op to the user. Callers that want to
+      // present a more specific message (e.g. hotkey commit) catch this
+      // and toast their own error before the rethrow propagates.
+      toastDispatch.error('Could not save settings. Try again.');
       throw error;
     }
   }, [applySettingsSnapshot]);
@@ -299,12 +286,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!(window as any).api) {
+    if (!window.api) {
       showToast('Electron API not loaded. Preload failed or running in browser.', 'info');
       return;
     }
 
-    const unsubError = (window as any).api.onError((msg: string) => {
+    const unsubError = window.api.onError((msg: string) => {
       if (processingTimeoutRef.current !== null) {
         window.clearTimeout(processingTimeoutRef.current);
         processingTimeoutRef.current = null;
@@ -341,7 +328,7 @@ export default function App() {
       }
       lastAudioLevelSentAtRef.current = 0;
       lastAudioBandsRef.current = [0];
-      (window as any).api.sendAudioLevel([0]);
+      window.api.sendAudioLevel([0]);
     };
 
     const enterTransientErrorState = (message: string, resetMs = APP_ERROR_RESET_MS) => {
@@ -359,7 +346,7 @@ export default function App() {
       processingTimeoutRef.current = window.setTimeout(() => {
         processingTimeoutRef.current = null;
         recordingIntentRef.current = false;
-        void (window as any).api.cancelRecordingStart?.();
+        void window.api.cancelRecordingStart?.();
         enterTransientErrorState('Transcription took too long. Please try again.');
       }, PROCESSING_TIMEOUT_MS);
     };
@@ -383,7 +370,7 @@ export default function App() {
       updateAppState('idle');
 
       if (notifyMain) {
-        void (window as any).api.cancelDictation?.();
+        void window.api.cancelDictation?.();
       }
     };
 
@@ -638,7 +625,7 @@ export default function App() {
           }, 0);
 
           if (now - lastAudioLevelSentAtRef.current >= 33 || maxBandDelta >= 0.08) {
-            (window as any).api.sendAudioLevel(bands);
+            window.api.sendAudioLevel(bands);
             lastAudioLevelSentAtRef.current = now;
             lastAudioBandsRef.current = bands.slice();
           }
@@ -655,7 +642,7 @@ export default function App() {
           if (discardPendingRecordingRef.current) {
             discardPendingRecordingRef.current = false;
             clearProcessingTimeout();
-            void (window as any).api.cancelRecordingStart?.();
+            void window.api.cancelRecordingStart?.();
             updateAppState('idle');
             return;
           }
@@ -671,19 +658,21 @@ export default function App() {
               OFFLINE_SAMPLE_RATE
             );
             normalizeAudioForTranscription(downsampled);
-            const audioBuffer = downsampled.buffer;
+            const audioBytes = new Uint8Array(downsampled.buffer, downsampled.byteOffset, downsampled.byteLength);
+            const audioBuffer = new ArrayBuffer(audioBytes.byteLength);
+            new Uint8Array(audioBuffer).set(audioBytes);
             const durationMs = Math.max(0, Date.now() - recordingStartRef.current);
 
-            void (window as any).api.transcribeAudio(audioBuffer, durationMs, speechMetrics).catch((error: unknown) => {
+            void window.api.transcribeAudio(audioBuffer, durationMs, speechMetrics).catch((error: unknown) => {
               console.error('Transcription IPC error:', error);
               clearProcessingTimeout();
-              void (window as any).api.cancelRecordingStart?.();
+              void window.api.cancelRecordingStart?.();
               enterTransientErrorState('Transcription failed. Please try again.');
             });
           } catch (error) {
             console.error('Audio decode error:', error);
             clearProcessingTimeout();
-            void (window as any).api.cancelRecordingStart?.();
+            void window.api.cancelRecordingStart?.();
             enterTransientErrorState('Failed to decode recorded audio.', 3000);
           }
         };
@@ -707,7 +696,7 @@ export default function App() {
         recordingIntentRef.current = false;
         clearProcessingTimeout();
         clearRecorderStopTimeout();
-        void (window as any).api.cancelRecordingStart?.();
+        void window.api.cancelRecordingStart?.();
         enterTransientErrorState('Microphone access failed.', 3000);
       }
     };
@@ -729,7 +718,7 @@ export default function App() {
         recorderStopTimeoutRef.current = window.setTimeout(() => {
           recorderStopTimeoutRef.current = null;
           clearProcessingTimeout();
-          void (window as any).api.cancelRecordingStart?.();
+          void window.api.cancelRecordingStart?.();
           enterTransientErrorState('Recording did not finish cleanly. Please try again.', 3000);
         }, RECORDER_STOP_TIMEOUT_MS);
         beginProcessingTimeout();
@@ -741,29 +730,30 @@ export default function App() {
       clearRecorderStopTimeout();
       recorderRef.current = null;
       updateAppState('idle');
-      void (window as any).api.cancelRecordingStart?.();
+      void window.api.cancelRecordingStart?.();
     };
 
     const handleManualStart = () => onStart();
     const handleManualStop = () => onStop();
     const handleCancelDictation = () => cancelCurrentDictation(false);
-    const handleShowToast = (e: any) => {
-      showToast(e.detail.message, e.detail.type);
-    };
 
+    // Note: the legacy `show-toast` CustomEvent is bridged into the new
+    // `echo:toast` channel inside `ToastHost.tsx` itself. We deliberately
+    // do NOT listen for it here — having a second bridge caused every
+    // `show-toast` dispatch (e.g. Dashboard's "Entry updated") to be
+    // enqueued twice.
     window.addEventListener('manual-start-recording', handleManualStart);
     window.addEventListener('manual-stop-recording', handleManualStop);
-    window.addEventListener('show-toast', handleShowToast);
 
-    const unsubStart = (window as any).api.onStartRecording(onStart);
-    const unsubStop = (window as any).api.onStopRecording(onStop);
-    const unsubCancel = (window as any).api.onCancelDictation(handleCancelDictation);
-    const unsubResult = (window as any).api.onTranscriptionResult(() => {
+    const unsubStart = window.api.onStartRecording(onStart);
+    const unsubStop = window.api.onStopRecording(onStop);
+    const unsubCancel = window.api.onCancelDictation(handleCancelDictation);
+    const unsubResult = window.api.onTranscriptionResult(() => {
       clearProcessingTimeout();
       clearRecorderStopTimeout();
       updateAppState('idle');
     });
-    const unsubNavigate = (window as any).api.onNavigateTab((tab: AppTab) => {
+    const unsubNavigate = window.api.onNavigateTab((tab: AppTab) => {
       if (tab === 'settings') {
         startTransition(() => setIsSettingsOpen(true));
       } else {
@@ -771,14 +761,6 @@ export default function App() {
         setIsSettingsOpen(false);
       }
       window.focus();
-    });
-
-    // Auto-update breadcrumb. The main process only fires `update-ready`
-    // once a downloaded update is staged for install on next quit, so we
-    // surface it as an info toast and rely on the existing tray "Quit
-    // Echo" entry to apply it.
-    const unsubUpdateReady = (window as any).api.onUpdateReady?.(() => {
-      showToast('Update downloaded — restart Echo to install.', 'info');
     });
 
     const audioPrewarmTimeoutId = window.setTimeout(() => {
@@ -797,10 +779,8 @@ export default function App() {
       unsubCancel();
       unsubResult();
       unsubNavigate();
-      unsubUpdateReady?.();
       window.removeEventListener('manual-start-recording', handleManualStart);
       window.removeEventListener('manual-stop-recording', handleManualStop);
-      window.removeEventListener('show-toast', handleShowToast);
       if (levelIntervalRef.current !== null) {
         window.clearInterval(levelIntervalRef.current);
         levelIntervalRef.current = null;
@@ -822,7 +802,7 @@ export default function App() {
 
   useEffect(() => {
     const loadInitialData = async () => {
-      const s = await (window as any).api.getSettings() as SettingsType;
+      const s = await window.api.getSettings() as SettingsType;
       applySettingsSnapshot(s);
       // Hand off from the branded splash to the app on the next frame so the
       // first real paint of the UI is already in place when the splash fades.
@@ -860,10 +840,17 @@ export default function App() {
   }, [ensureDevicesLoaded, warmSettingsView]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      warmSettingsView();
-    }, 5000);
-
+    // Warm the Settings chunk on idle so opening Settings later doesn't
+    // combine lazy-import work with the modal animation.
+    const idleWindow = window as IdleWindow;
+    const ric = idleWindow.requestIdleCallback;
+    if (ric) {
+      const id = ric(() => warmSettingsView());
+      return () => {
+        idleWindow.cancelIdleCallback?.(id);
+      };
+    }
+    const timeoutId = window.setTimeout(() => warmSettingsView(), 250);
     return () => window.clearTimeout(timeoutId);
   }, [warmSettingsView]);
 
@@ -877,6 +864,9 @@ export default function App() {
 
   return (
     <div className="h-screen overflow-hidden text-foreground" style={{ background: 'hsl(var(--app-bg))' }}>
+      {/* Pre-warms framer-motion at boot so the first modal open animates
+          smoothly instead of skipping its spring on cold JIT. */}
+      <MotionWarmup />
 
       {/* Titlebar drag region — only covers the area above the main panel so it
           doesn't intercept hover/click on the sidebar toggle */}
@@ -887,7 +877,7 @@ export default function App() {
         <div className="no-drag flex items-center">
           <button
             type="button"
-            onClick={() => (window as any).api.windowMinimize()}
+            onClick={() => window.api.windowMinimize()}
             aria-label="Minimize window"
             className="flex h-10 w-11 items-center justify-center rounded-md text-foreground/65 transition-colors hover:bg-black/5 hover:text-foreground"
           >
@@ -895,7 +885,7 @@ export default function App() {
           </button>
           <button
             type="button"
-            onClick={() => (window as any).api.windowToggleMaximize()}
+            onClick={() => window.api.windowToggleMaximize()}
             aria-label="Maximize window"
             className="flex h-10 w-11 items-center justify-center rounded-md text-foreground/65 transition-colors hover:bg-black/5 hover:text-foreground"
           >
@@ -903,7 +893,7 @@ export default function App() {
           </button>
           <button
             type="button"
-            onClick={() => (window as any).api.windowClose()}
+            onClick={() => window.api.windowClose()}
             aria-label="Close window"
             className="flex h-10 w-11 items-center justify-center rounded-md text-foreground/65 transition-colors hover:bg-destructive/10 hover:text-destructive"
           >
@@ -912,7 +902,7 @@ export default function App() {
         </div>
       </div>
 
-      <div className="relative z-[1] flex h-full gap-0 px-1.5 pb-1.5">
+      <div className="relative z-[1] flex h-full gap-0 px-1.5 pb-1">
         {/* ── Sidebar ── */}
         <motion.div
           className="relative shrink-0 overflow-hidden"
@@ -933,13 +923,34 @@ export default function App() {
               </button>
             </div>
 
-            {/* Brand row */}
-            <div className="mb-4 flex h-9 items-center">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center text-foreground">
-                <AudioLines size={20} strokeWidth={2.2} />
-              </span>
+            {/* Brand row.
+                Note: the logo PNG carries ~12px of transparent padding inside
+                its 64×64 bounding box, so a literal `gap-2` flex spacing
+                rendered as a ~20px visual gap. We zero the flex gap and pull
+                the wordmark in with a negative margin to absorb most of that
+                transparent padding, leaving a clean ~4px visual gap.
+
+                The whole row is shifted left by -ml-2 so the visible left
+                edge of the logo lines up with the visible left edge of the
+                nav-item icons below (both then sit at x≈12 from the aside
+                edge, since the nav icons are centred inside their h-9 w-9
+                boxes). */}
+            <div className="-ml-2 mb-4 flex h-16 items-center gap-0">
               <motion.span
-                className="ml-1 whitespace-nowrap text-[24px] font-semibold leading-none tracking-tight text-foreground"
+                className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-visible"
+                animate={{ opacity: isSidebarCompact ? 0 : 1, width: isSidebarCompact ? 0 : 64 }}
+                transition={{ type: 'spring', stiffness: 520, damping: 44, mass: 0.8 }}
+              >
+                <span className="absolute inset-0 rounded-full bg-indigo-500/10 blur-md" />
+                <img
+                  src={echoLogoUrl}
+                  alt="Echo"
+                  draggable={false}
+                  className="relative h-16 w-16 select-none object-contain"
+                />
+              </motion.span>
+              <motion.span
+                className="-ml-2 whitespace-nowrap text-[24px] font-semibold leading-none tracking-tight text-foreground"
                 style={{ fontFamily: '"Figtree", "Aptos", "Segoe UI Variable Text", "Segoe UI", sans-serif' }}
                 animate={{ opacity: isSidebarCompact ? 0 : 1, width: isSidebarCompact ? 0 : 'auto' }}
                 transition={{ type: 'spring', stiffness: 520, damping: 44, mass: 0.8 }}
@@ -959,10 +970,10 @@ export default function App() {
                     onClick={() => handleTabClick(item.id)}
                     aria-label={item.label}
                     title={isSidebarCompact ? item.label : undefined}
-                    className={`flex h-9 ${isSidebarCompact ? 'w-9' : 'w-full'} items-center overflow-hidden rounded-md text-left text-[14.5px] font-semibold text-foreground transition-colors duration-150 hover:bg-black/[0.04] ${isActive ? 'bg-black/[0.05]' : ''}`}
+                    className={`flex h-9 ${isSidebarCompact ? 'w-9' : 'w-full'} items-center overflow-hidden rounded-[4px] text-left text-[14.5px] font-semibold text-foreground transition-colors duration-150 hover:bg-black/[0.04] ${isActive ? 'bg-black/[0.05]' : ''}`}
                   >
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center">
-                      <SidebarIcon icon={item.icon} active={isActive} />
+                      <SidebarIcon icon={item.icon} />
                     </span>
                     <motion.span
                       className="ml-0.5 whitespace-nowrap"
@@ -978,6 +989,8 @@ export default function App() {
 
             {/* Subtle separator between primary nav and the Settings entry. */}
             <div className="mx-3 my-2 h-px bg-black/[0.035]" />
+
+            <UpdateNotch compact={isSidebarCompact} />
 
             {/* Settings — pinned to bottom */}
             <div>
@@ -995,7 +1008,7 @@ export default function App() {
                 className={`flex h-9 ${isSidebarCompact ? 'w-9' : 'w-full'} items-center overflow-hidden rounded-md text-left text-[14.5px] font-semibold text-foreground transition-colors duration-150 hover:bg-black/[0.04] focus:outline-none focus-visible:outline-none focus-visible:ring-0`}
               >
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center">
-                  <SidebarIcon icon={SettingsIcon} active={false} />
+                  <SidebarIcon icon={SettingsIcon} />
                 </span>
                 <motion.span
                   className="ml-1 whitespace-nowrap"
@@ -1011,11 +1024,11 @@ export default function App() {
         </motion.div>
 
         {/* ── Main Panel ── */}
-        <div className="flex min-w-0 flex-1 flex-col pt-10 pr-1.5 pb-1.5">
+        <div className="flex min-w-0 flex-1 flex-col pt-10 pr-1">
         <main className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-black/[0.09] bg-background">
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <div className="absolute inset-0">
-              {activeTab === 'dashboard' && <DashboardView settings={settings} onUpdateSettings={handleUpdateSettings} />}
+              {activeTab === 'dashboard' && <DashboardView settings={settings} />}
               <Suspense fallback={<MainPanelSkeleton />}>
                 {activeTab === 'history' && <HistoryView />}
                 {activeTab === 'snippets' && <SnippetsView />}
@@ -1050,23 +1063,12 @@ export default function App() {
           />
         )}
 
-        {/* Toast */}
-        {toast && (
-          <Toast
-            message={toast.message}
-            type={toast.type}
-            onClose={() => setToast(null)}
-          />
-        )}
+        {/* Toast host — stack of bottom-right notifications. Listens for
+            both the new `echo:toast` channel and the legacy `show-toast`
+            CustomEvent that several components still dispatch. */}
+        <ToastHost />
       </div>
 
-      {/* CSS transition prewarm — forces the compositor to JIT-compile the
-          opacity/transform path for .dialog-panel before the user ever opens
-          a modal, eliminating cold-start lag on first app launch. */}
-      <div aria-hidden="true" className="pointer-events-none fixed" style={{ top: -9999, left: -9999 }}>
-        <div className="dialog-panel dialog-panel-default" style={{ opacity: 0, width: 1, height: 1 }} />
-        <div className="dialog-panel dialog-panel-pop" style={{ opacity: 0, width: 1, height: 1 }} />
-      </div>
     </div>
   );
 }

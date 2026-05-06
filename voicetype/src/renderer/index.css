@@ -11,36 +11,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Animations (CSS-first, compositor-friendly) ───
-   We prefer CSS transitions/keyframes over JS animation libs for modals,
-   menus, and hover states. This avoids framer-motion first-mount cold
-   starts and keeps interactions feeling instant.                        */
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes scaleIn {
-  from { opacity: 0; transform: scale(0.96) translateY(8px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
-}
-
-@keyframes popIn {
-  from { opacity: 0; transform: translateY(10px) scale(0.94); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes modalSpringIn {
-  0% { opacity: 0; transform: translateY(14px) scale(0.94); }
-  68% { opacity: 1; transform: translateY(-1px) scale(1.012); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes modalSnapOut {
-  from { opacity: 1; transform: translateY(0) scale(1); }
-  to { opacity: 0; transform: translateY(6px) scale(0.97); }
-}
-
 @keyframes textGradient {
   to { background-position: 200% center; }
 }
@@ -48,26 +18,6 @@
 @layer utilities {
   .animate-text-gradient {
     animation: textGradient 3s linear infinite;
-  }
-  .animate-pop-in {
-    animation: popIn 140ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
-  .animate-fade-in {
-    animation: fadeIn 140ms ease-out;
-  }
-  .dialog-shell {
-    transition-property: opacity !important;
-    transition-duration: 160ms !important;
-    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1) !important;
-  }
-  .dialog-panel {
-    transition-duration: 220ms !important;
-  }
-  .dialog-panel-default {
-    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1) !important;
-  }
-  .dialog-panel-pop {
-    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1) !important;
   }
   .segmented-thumb {
     will-change: transform;
@@ -165,8 +115,9 @@
     --sidebar: 60 17% 84.5%;
     --sidebar-foreground: 222 20% 11%;
 
-    /* App shell background (outside the main panel). */
-    --app-bg: 220 20% 94%;
+    /* App shell background (outside the main panel) — pale icy-blue framing
+       (#E8F4F8) that wraps around the white main panel and the sidebar. */
+    --app-bg: 195 53% 94%;
 
     --radius: 0.75rem;
 
@@ -373,7 +324,7 @@
   /* Top of the typography ladder. Default tracking reads better than
      `tracking-tight` once the base font scales up on large monitors. */
   .page-title {
-    @apply text-[28px] font-semibold leading-tight text-foreground;
+    @apply text-[22px] font-semibold leading-tight text-foreground;
     font-family: 'Figtree', system-ui, sans-serif;
     letter-spacing: -0.01em;
   }
@@ -432,7 +383,7 @@
      stays legible whether idle, hovered, or active. Only the surface
      treatment distinguishes the active item. */
   .nav-item {
-    @apply flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[14.5px] font-semibold text-foreground;
+    @apply flex w-full items-center gap-2 rounded-[4px] px-3 py-1.5 text-left text-[14.5px] font-semibold text-foreground;
     @apply transition-colors duration-200 hover:bg-black/[0.04];
   }
   .nav-item.is-active {
@@ -443,15 +394,79 @@
     font-family: 'Playfair Display', 'Georgia', 'Times New Roman', serif;
   }
 
+  /* Keyboard cap — frosted-ice variant. A pale icy gradient (almost
+     white at the top fading into soft sky-blue) with a glossy top
+     highlight makes the chip read as a piece of polished frost. The
+     label is a deep icy blue so it stays readable against the light
+     surface, and a thin cyan rim + faint outer glow give it the
+     "rimed with frost" feel. The pill runs a slow press-loop
+     animation so the user notices it as the key to hold down. */
   .kbd-key {
-    @apply inline-flex min-w-[40px] items-center justify-center rounded-[8px] border border-[rgba(0,0,0,0.14)] bg-white px-2.5 py-1 text-[13px] font-semibold text-foreground;
-    font-family: 'Figtree', system-ui, sans-serif;
+    @apply relative inline-flex min-w-[36px] items-center justify-center rounded-[6px] px-2 py-[3px] text-[12px] font-semibold;
+    font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 50%),
+      linear-gradient(180deg, #F0F9FF 0%, #C9E6F5 55%, #A9D3EA 100%);
+    color: #0F4F7A;
+    border: 1px solid rgba(120, 180, 215, 0.55);
+    border-top-color: rgba(255, 255, 255, 0.95);
     box-shadow:
-      0 1px 0 rgba(0,0,0,0.10),
-      0 2px 0 rgba(0,0,0,0.06),
-      inset 0 1px 0 rgba(255,255,255,0.75);
-    text-transform: capitalize;
-    letter-spacing: 0;
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      inset 0 -1px 0 rgba(120, 180, 215, 0.3),
+      0 1px 2px rgba(80, 140, 180, 0.18),
+      0 4px 12px rgba(120, 200, 235, 0.25),
+      0 0 16px rgba(180, 225, 245, 0.55);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    transform: translateZ(0);
+    animation: kbd-press 2.4s ease-in-out infinite;
+    will-change: transform, box-shadow;
+  }
+
+  /* Press loop. Most of the cycle the chip rests; for a brief window
+     it dips down with a softer shadow and a slightly dimmer face,
+     mimicking the tactile feel of a real keycap depressing. The
+     pause between presses (~1.6s of "rest") is deliberate so the
+     animation reads as a deliberate "press me" hint rather than a
+     nervous twitch. */
+  @keyframes kbd-press {
+    0%, 55%, 100% {
+      transform: translateY(0);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 -1px 0 rgba(120, 180, 215, 0.3),
+        0 1px 2px rgba(80, 140, 180, 0.18),
+        0 4px 12px rgba(120, 200, 235, 0.25),
+        0 0 16px rgba(180, 225, 245, 0.55);
+      filter: brightness(1);
+    }
+    65% {
+      transform: translateY(1.5px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.6),
+        inset 0 -1px 0 rgba(120, 180, 215, 0.2),
+        0 0 0 rgba(80, 140, 180, 0),
+        0 1px 3px rgba(80, 140, 180, 0.20),
+        0 0 8px rgba(180, 225, 245, 0.30);
+      filter: brightness(0.96);
+    }
+    80% {
+      transform: translateY(0);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 -1px 0 rgba(120, 180, 215, 0.3),
+        0 1px 2px rgba(80, 140, 180, 0.18),
+        0 4px 12px rgba(120, 200, 235, 0.25),
+        0 0 16px rgba(180, 225, 245, 0.55);
+      filter: brightness(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .kbd-key {
+      animation: none;
+    }
   }
 }
 

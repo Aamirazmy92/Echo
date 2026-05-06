@@ -108,6 +108,7 @@ const startForge = () => {
       env: {
         ...process.env,
         ECHO_DEV_SUPERVISOR: '1',
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, '--no-deprecation'].filter(Boolean).join(' '),
       },
     }
   );

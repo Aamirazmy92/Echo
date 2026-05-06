@@ -1,7 +1,14 @@
 import { app, BrowserWindow, ipcMain, Notification, session, shell, screen, crashReporter } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { autoUpdater } from 'electron-updater';
+import {
+  initAutoUpdater,
+  checkForUpdatesNow,
+  downloadUpdateNow,
+  installAndRestart,
+  getUpdateStatus,
+  broadcastUpdateStatusTo,
+} from './updater';
 // Static import (instead of dynamic `require`) so Vite reliably bundles
 // this tiny helper into main.js. It returns true when Squirrel launches
 // the app with --squirrel-install / --squirrel-update / --squirrel-uninstall
@@ -12,8 +19,23 @@ import squirrelStartup from 'electron-squirrel-startup';
 import type { DictionaryItemInput, Settings, SnippetInput, SpeechMetrics } from '../shared/types';
 import { initStore, getSettings, saveSettings, hasGroqApiKey, setGroqApiKey, clearGroqApiKey, isSecureStorageAvailable, getGroqApiKeyPlain } from './store';
 import { installGlobalErrorHandlers, logError, logInfo, logWarn } from './logger';
+import {
+  initAuth,
+  signInWithPassword,
+  signUpWithPassword,
+  signOut as authSignOut,
+  sendPasswordReset,
+  startGoogleSignIn,
+  completeOAuthCallback,
+  serialiseSession,
+  isAuthConfigured,
+  onAuthStateChange,
+  deleteAccount,
+  updateDisplayName,
+} from './auth';
+import { initSync, forceSync, getSyncStatus, syncOnFocus } from './sync';
 import { createTray, refreshTrayMenu, updateTrayState } from './tray';
-import { registerHotkeys, getActiveAppName, prewarmActiveAppDetection, refreshActiveAppName, resetHotkeyState, suspendHotkey, unregisterAll as unregisterAllHotkeys, waitForHotkeyWatcherReady } from './hotkey';
+import { registerHotkeys, getActiveAppName, prewarmActiveAppDetection, refreshActiveAppName, resetHotkeyState, suspendHotkey, unregisterAll as unregisterAllHotkeys } from './hotkey';
 import { applyDictionary } from './dictionary';
 import { expandSnippets } from './snippets';
 import { injectText, prewarmInjectHelper, shutdownInjectHelper } from './inject';
@@ -108,13 +130,24 @@ let transcribeModulePromise: Promise<typeof import('./transcribe')> | null = nul
 let cleanupModulePromise: Promise<typeof import('./cleanup')> | null = null;
 
 async function verifyGroqApiKey(key: string) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
-    const { OpenAI } = await import('openai');
-    const client = new OpenAI({ apiKey: sanitizeGroqApiKey(key), baseURL: 'https://api.groq.com/openai/v1' });
-    await client.models.list();
+    const response = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: {
+        Authorization: `Bearer ${sanitizeGroqApiKey(key)}`,
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      return { ok: false as const, error: errorText || `Groq API key check failed with HTTP ${response.status}` };
+    }
     return { ok: true as const };
-  } catch (err: any) {
-    return { ok: false as const, error: err?.message || 'Unknown error' };
+  } catch (err: unknown) {
+    return { ok: false as const, error: err instanceof Error ? err.message : 'Unknown error' };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -148,6 +181,12 @@ async function ensureHistoryModule() {
   if (!historyInitialized) {
     history.initHistory();
     historyInitialized = true;
+    // Now that the DB is open, sync any data that was deferred while
+    // we waited for it. This matters for cold starts where a saved
+    // Supabase session triggers `startSync()` *before* the renderer
+    // has caused the history module to load lazily — drainQueue and
+    // pullAll bail out early in that case, so they need a nudge here.
+    void forceSync();
   }
 
   return history;
@@ -237,13 +276,6 @@ function syncLauncherVisibilityPreference(showInLauncher: boolean) {
   }
 
   mainWindow?.setSkipTaskbar(!showInLauncher);
-}
-
-async function waitForStartupWarmup() {
-  const hotkeyReady = await waitForHotkeyWatcherReady(2500);
-  if (!hotkeyReady) {
-    logWarn('hotkey', 'Hotkey watcher did not report ready before initial show');
-  }
 }
 
 function fingerprintTranscript(text: string): string {
@@ -379,6 +411,21 @@ if (squirrelStartup) {
   app.quit();
 }
 
+// Register Echo as the OS handler for `echo://` URLs so OAuth callbacks
+// (Supabase Google sign-in) launch us back into focus instead of opening
+// a browser tab no-op. Must run BEFORE requestSingleInstanceLock or the
+// registration race-conditions on first install.
+const PROTOCOL = 'echo';
+if (process.defaultApp) {
+  // Dev mode: pass the script path so the OS launches `electron .` with
+  // the URL appended, rather than a non-existent installer alias.
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
+  }
+} else {
+  app.setAsDefaultProtocolClient(PROTOCOL);
+}
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
@@ -392,6 +439,7 @@ function registerAllIpcs() {
   ipcsRegistered = true;
 
   // Handle IPCs
+  ipcMain.handle('get-app-version', () => app.getVersion());
   ipcMain.handle('get-settings', () => getSettings());
   ipcMain.on('get-initial-theme', (event) => {
     event.returnValue = 'light';
@@ -555,6 +603,41 @@ function registerAllIpcs() {
     return getSettings();
   });
 
+  // ─────────────────────── Auth / cloud sync ──────────────────────────
+  // The renderer's <AuthGate> calls these. All return plain shapes
+  // safe to ship through ipcRenderer.invoke (no Error objects, no
+  // Supabase client instances).
+  ipcMain.handle('auth-config-status', () => ({ configured: isAuthConfigured() }));
+  ipcMain.handle('auth-get-session', () => serialiseSession());
+  ipcMain.handle('auth-sign-in', (_e, email: string, password: string) =>
+    signInWithPassword(email, password)
+  );
+  ipcMain.handle('auth-sign-up', (_e, email: string, password: string, displayName?: string) =>
+    signUpWithPassword(email, password, displayName)
+  );
+  ipcMain.handle('auth-sign-out', () => authSignOut());
+  ipcMain.handle('auth-reset-password', (_e, email: string) => sendPasswordReset(email));
+  ipcMain.handle('auth-google-sign-in', () => startGoogleSignIn());
+  ipcMain.handle('auth-delete-account', () => deleteAccount());
+  ipcMain.handle('auth-update-display-name', (_e, name: string) => updateDisplayName(name));
+
+  ipcMain.handle('sync-get-status', () => getSyncStatus());
+  ipcMain.handle('sync-force', () => forceSync());
+
+  // Auto-update IPC. The renderer drives the "Download" / "Restart"
+  // buttons; the state itself is pushed proactively over the
+  // `update-status` channel via `broadcastUpdateStatusTo`.
+  ipcMain.handle('update-get-status', () => getUpdateStatus());
+  ipcMain.handle('update-check', () => {
+    checkForUpdatesNow();
+  });
+  ipcMain.handle('update-download', () => {
+    downloadUpdateNow();
+  });
+  ipcMain.handle('update-install', () => {
+    installAndRestart();
+  });
+
   // Hotkey -> transcribe flow (optimized: parallel operations)
   ipcMain.handle('transcribe-audio', async (_, arrayBuffer: ArrayBuffer, durationMs: number, speechMetrics?: SpeechMetrics) => {
     const requestSequence = ++transcriptionSequence;
@@ -568,6 +651,7 @@ function registerAllIpcs() {
       updateTrayState('processing');
       updateOverlayState('processing');
       const settings = getSettings();
+      const groqApiKey = getGroqApiKeyPlain();
 
       // Kick off every downstream dependency in parallel with transcription.
       // The cleanup module, history store (SQLite open), and SendInput helper
@@ -587,7 +671,7 @@ function registerAllIpcs() {
 
       // Only await the transcription itself so it returns instantly
       const result = await withTimeout(
-        transcribeAudio(sanitizedAudioBuffer, settings, sanitizedDurationMs, sanitizedSpeechMetrics),
+        transcribeAudio(sanitizedAudioBuffer, settings, sanitizedDurationMs, sanitizedSpeechMetrics, groqApiKey),
         TRANSCRIPTION_TIMEOUT_MS,
         'Transcription'
       );
@@ -618,7 +702,7 @@ function registerAllIpcs() {
       const toneId = resolvedStyle.toneId;
       const cleanupModule = await cleanupModulePromise;
       const cleaned = await withTimeout(
-        cleanupModule.cleanupText(rawText, toneId, settings, result.detectedLanguage),
+        cleanupModule.cleanupText(rawText, toneId, settings, result.detectedLanguage, groqApiKey),
         CLEANUP_TIMEOUT_MS,
         'Cleanup'
       );
@@ -681,7 +765,7 @@ function registerAllIpcs() {
 
       void refreshTrayMenu();
       if (mainWindow) mainWindow.webContents.send('transcription-result', { ...entry, processingTimeMs });
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (isCancelled()) {
         return;
       }
@@ -693,7 +777,7 @@ function registerAllIpcs() {
         // Never forward raw SDK/OS error strings to the renderer — they can
         // contain paths, headers, or API payload fragments. Map to a small
         // set of user-friendly messages based on common root causes.
-        const rawMessage = String(e?.message ?? e ?? '');
+        const rawMessage = e instanceof Error ? e.message : String(e ?? '');
         const friendly = /timeout|timed out/i.test(rawMessage)
           ? 'Transcription took too long. Please try again.'
           : /401|unauthorized|api key|invalid_api_key/i.test(rawMessage)
@@ -807,6 +891,65 @@ function registerWindowSecurityHandlers(window: BrowserWindow) {
 
   window.webContents.on('will-attach-webview', (event) => {
     event.preventDefault();
+  });
+}
+
+// ---------- Content Security Policy ----------
+//
+// We inject CSP at the response-header level rather than via a `<meta>`
+// tag in `index.html`. The reason: dev needs to allow Vite's HMR
+// WebSocket (`ws://localhost:5173`) and module fetches, but production
+// must NOT allow arbitrary `ws:`/`wss:` connections. A single meta tag
+// can't express that split, so historically the dev policy ("ws: wss:")
+// was shipping to packaged builds — meaning any future XSS or supply-
+// chain compromise in the renderer could phone home over WebSocket to
+// any host on the internet.
+//
+// `connect-src 'self'` in production is sufficient because Supabase is
+// only ever called from the main process; the renderer never makes a
+// network request directly. `https://flagcdn.com` is allowed in
+// `img-src` for country flags in the language picker.
+function setupContentSecurityPolicy(): void {
+  const isDev = !app.isPackaged;
+
+  const directives = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https://flagcdn.com",
+    "font-src 'self' data:",
+    isDev
+      // Dev: Vite serves modules over http and HMR over ws on localhost.
+      // Scope the allowance tightly to localhost loopback so we don't
+      // accidentally re-introduce the wide-open dev policy.
+      ? "connect-src 'self' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:*"
+      // Prod: renderer talks to nobody directly. All network egress
+      // (Supabase, Groq, GitHub releases) happens from main.
+      : "connect-src 'self'",
+    "media-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-src 'none'",
+    "form-action 'self'",
+  ];
+
+  const policy = directives.join('; ');
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const responseHeaders = { ...details.responseHeaders } as Record<string, string[] | string>;
+
+    // Strip any pre-existing CSP headers from upstream (Vite dev server,
+    // file:// protocol handler) so our policy is the single source of
+    // truth. Header keys are case-insensitive in HTTP.
+    for (const key of Object.keys(responseHeaders)) {
+      if (key.toLowerCase() === 'content-security-policy' || key.toLowerCase() === 'content-security-policy-report-only') {
+        delete responseHeaders[key];
+      }
+    }
+
+    responseHeaders['Content-Security-Policy'] = [policy];
+
+    callback({ responseHeaders });
   });
 }
 
@@ -1004,9 +1147,9 @@ const createWindow = () => {
     center: !useRestoredBounds,
     frame: false,
     ...(windowIcon ? { icon: windowIcon } : {}),
-    // Matches the splash/app-shell surface (`hsl(220 20% 94%)`) so the window
-    // paints the brand colour instantly instead of flashing white.
-    backgroundColor: '#EDEFF3',
+    // Matches the splash/app-shell surface (`hsl(195 53% 94%)` / #E8F4F8) so
+    // the window paints the brand colour instantly instead of flashing white.
+    backgroundColor: '#E8F4F8',
     skipTaskbar: process.platform === 'darwin' ? false : !settings.showAppInDock,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1018,6 +1161,8 @@ const createWindow = () => {
   });
   registerWindowSecurityHandlers(mainWindow);
   attachWindowStatePersistence(mainWindow, restoreMaximized);
+  const stopUpdateStatusBroadcast = broadcastUpdateStatusTo(mainWindow);
+  mainWindow.once('closed', stopUpdateStatusBroadcast);
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
@@ -1028,6 +1173,13 @@ const createWindow = () => {
   mainWindow.once('ready-to-show', () => {
     allowOverlayDisplay();
     startDeferredStartupTasks();
+  });
+
+  // Sync on focus — gives users near-instant cross-device updates
+  // without the cost of a real-time websocket connection. The 30-second
+  // background timer in the sync engine still runs as a fallback.
+  mainWindow.on('focus', () => {
+    syncOnFocus();
   });
 
   mainWindow.on('close', (event) => {
@@ -1089,6 +1241,23 @@ app.on('ready', async () => {
   ]);
   initStore();
 
+  // Cloud auth + sync (v1.1.0). initAuth attempts to restore the
+  // previous Supabase session from disk; initSync subscribes to auth
+  // state and starts/stops the push/pull engine accordingly. Both are
+  // safe no-ops when VITE_SUPABASE_URL is unset (lets dev builds run
+  // without a backend configured).
+  await initAuth();
+  initSync();
+
+  // Push the renderer back into a "logged-out, sync paused" state if
+  // Supabase ever revokes the session (e.g. user deletes their account
+  // from another device).
+  onAuthStateChange((session) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('auth-state', session ? serialiseSession() : null);
+    }
+  });
+
   // Crash reporting. We always start the reporter so Chromium-level
   // crashes (renderer GPU, native addons, segfaults) drop a minidump in
   // `%APPDATA%/Echo/Crashpad/`. If a submit URL is configured we also
@@ -1117,6 +1286,8 @@ app.on('ready', async () => {
     return permission === 'media';
   });
 
+  setupContentSecurityPolicy();
+
   registerAllIpcs();
   createWindow();
   // Overlay creation is deferred to `startDeferredStartupTasks` so we don't
@@ -1124,46 +1295,11 @@ app.on('ready', async () => {
   // Stacking two Electron window inits blocks the main process for ~300 ms
   // before the main window can even begin painting.
 
-  // Auto-update (production builds only).
-  //
-  // electron-forge doesn't auto-generate the `app-update.yml` that
-  // electron-updater normally reads at runtime, so we configure the
-  // feed programmatically here. The values must match the GitHub repo
-  // we publish releases to (see `forge.config.ts` -> PublisherGithub).
-  if (app.isPackaged) {
-    try {
-      autoUpdater.setFeedURL({
-        provider: 'github',
-        owner: 'Aamirazmy92',
-        repo: 'Echo',
-      });
-    } catch (error) {
-      logWarn('updater', 'Failed to configure update feed', error);
-    }
-    autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.on('update-available', () => {
-      logInfo('updater', 'Update available — downloading in background');
-      autoUpdater.downloadUpdate().catch((err: any) => {
-        logWarn('updater', 'Download failed', err);
-      });
-    });
-    autoUpdater.on('update-downloaded', () => {
-      logInfo('updater', 'Update downloaded — will install on quit');
-      // Surface a toast in the renderer so the user knows a restart will
-      // upgrade the app. Best-effort — if the window is gone we just stay
-      // silent and apply on next quit.
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('update-ready');
-      }
-    });
-    autoUpdater.on('error', (err: any) => {
-      logWarn('updater', 'Auto-updater error', err);
-    });
-    autoUpdater.checkForUpdates().catch((err: any) => {
-      logWarn('updater', 'Update check failed', err);
-    });
-  }
+  // Auto-update (production builds only). All the feed-URL plumbing,
+  // event wiring, and state-machine bookkeeping lives in `./updater`.
+  // Window-specific status forwarding is attached in `createWindow()` so
+  // recreated windows also receive the current updater state.
+  initAutoUpdater();
 
   // Defer non-critical I/O to keep startup responsive. The SendInput helper
   // and dictation modules are prewarmed eagerly inside
@@ -1182,9 +1318,35 @@ app.on('ready', async () => {
   }
 });
 
-app.on('second-instance', () => {
+app.on('second-instance', (_event, argv) => {
   showExistingWindow();
+  // Windows OAuth deep links arrive in argv when the OS hands the URL
+  // off to the already-running Echo instance. Anything that looks like
+  // `echo://...` is forwarded to the auth handler.
+  for (const arg of argv) {
+    if (typeof arg === 'string' && arg.startsWith(`${PROTOCOL}://`)) {
+      void completeOAuthCallback(arg);
+    }
+  }
 });
+
+// macOS-style deep-link delivery (also fires on Windows for some OAuth
+// providers that round-trip through a system browser handler).
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  if (url.startsWith(`${PROTOCOL}://`)) {
+    void completeOAuthCallback(url);
+  }
+});
+
+// On startup, the original argv may contain an OAuth callback if the
+// user kicked off the flow from a browser tab that launched Echo as the
+// `echo://` handler. Drain those before the renderer mounts so the
+// session is already restored when the app paints.
+const initialDeepLink = process.argv.find((a) => typeof a === 'string' && a.startsWith(`${PROTOCOL}://`));
+if (initialDeepLink) {
+  app.whenReady().then(() => completeOAuthCallback(initialDeepLink));
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

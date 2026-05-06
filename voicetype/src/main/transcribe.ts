@@ -2,14 +2,13 @@ import { Settings, SpeechMetrics } from '../shared/types';
 import { resolveRecognitionLanguage } from '../shared/languages';
 import { transcribeWithLocalModel } from './localTranscribe';
 import { transcribeWithCloud } from './cloudTranscribe';
-import { getGroqApiKeyPlain } from './store';
 
 const SILENCE_FRAME_THRESHOLD = 5;
 const SILENCE_RMS_THRESHOLD = 0.04;
 const SILENCE_BAND_THRESHOLD = 0.20;
 const SILENCE_SPEECH_RATIO = 0.12;
 
-function isLikelySilentClip(metrics?: SpeechMetrics, durationMs?: number): boolean {
+function isLikelySilentClip(metrics?: SpeechMetrics): boolean {
   if (!metrics || metrics.frameCount === 0) return false;
 
   const speechRatio = metrics.speechFrames / metrics.frameCount;
@@ -217,7 +216,8 @@ export async function transcribeAudio(
   audioBuffer: ArrayBuffer,
   settings: Settings,
   durationMs?: number,
-  speechMetrics?: SpeechMetrics
+  speechMetrics?: SpeechMetrics,
+  groqApiKey = ''
 ): Promise<TranscribeResult> {
   if (!audioBuffer || audioBuffer.byteLength === 0) {
     return { text: '', method: 'local' };
@@ -229,7 +229,7 @@ export async function transcribeAudio(
   }
 
   // Secondary guard: check renderer-reported speech metrics
-  if (isLikelySilentClip(speechMetrics, durationMs)) {
+  if (isLikelySilentClip(speechMetrics)) {
     return { text: '', method: 'local' };
   }
 
@@ -240,17 +240,17 @@ export async function transcribeAudio(
     let detectedLanguage: string | undefined;
     const recognitionLanguage = resolveRecognitionLanguage(settings);
 
-    const groqApiKey = getGroqApiKeyPlain();
     if (settings.useCloudTranscription && groqApiKey) {
       try {
         const cloudResult = await transcribeWithCloud(audioBuffer, groqApiKey, recognitionLanguage);
         raw = cloudResult.text;
         detectedLanguage = cloudResult.detectedLanguage;
         method = 'cloud';
-      } catch (err: any) {
-        cloudError = err?.message || String(err);
-        console.warn(`[transcribe] Cloud failed (key set=${!!groqApiKey}, len=${groqApiKey?.length ?? 0}), error:`, cloudError);
-        console.warn('[transcribe] Error status:', err?.status, 'type:', err?.type);
+      } catch (err: unknown) {
+        const cloudFailure = err as { message?: unknown; status?: unknown; type?: unknown };
+        cloudError = typeof cloudFailure.message === 'string' ? cloudFailure.message : String(err);
+        console.warn('[transcribe] Cloud failed, falling back to local:', cloudError);
+        console.warn('[transcribe] Error status:', cloudFailure.status, 'type:', cloudFailure.type);
         raw = await transcribeWithLocalModel(audioBuffer, recognitionLanguage);
         method = 'local (cloud-fallback)';
       }
@@ -271,7 +271,7 @@ export async function transcribeAudio(
     }
 
     return { text, method, cloudError, detectedLanguage };
-  } catch (error: any) {
-    throw new Error('Transcription failed: ' + (error?.message || 'Unknown error'));
+  } catch (error: unknown) {
+    throw new Error('Transcription failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
   }
 }

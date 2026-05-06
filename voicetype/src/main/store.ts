@@ -111,6 +111,10 @@ function persistGroqApiKeyIfNeeded(): void {
 
 export function initStore() {
   store = new Store<Settings>({ defaults });
+  const legacyStore = store as Store<Settings> & {
+    get(key: string): unknown;
+    delete(key: string): void;
+  };
 
   // One-time repair: if an earlier build saved a bullet-mask as the key,
   // drop it so the user is prompted to enter a real key instead of being
@@ -128,45 +132,45 @@ export function initStore() {
     // ignore — decryption errors are handled at read time
   }
 
-  const legacyHotkey = store.get('hotkey' as any) as string | undefined;
+  const legacyHotkey = legacyStore.get('hotkey') as string | undefined;
   if (legacyHotkey && !store.get('pushToTalkHotkey')) {
     store.set('pushToTalkHotkey', [normalizeHotkeyAccelerator(legacyHotkey, DEFAULT_PUSH_TO_TALK_HOTKEY)]);
   }
 
-  const normalizedToggleHotkey = normalizeHotkeyList(store.get('toggleHotkey' as any), DEFAULT_TOGGLE_HOTKEY);
+  const normalizedToggleHotkey = normalizeHotkeyList(legacyStore.get('toggleHotkey'), DEFAULT_TOGGLE_HOTKEY);
   if (JSON.stringify(normalizedToggleHotkey) !== JSON.stringify(store.get('toggleHotkey'))) {
     store.set('toggleHotkey', normalizedToggleHotkey);
   }
 
-  const normalizedPushToTalkHotkey = normalizeHotkeyList(store.get('pushToTalkHotkey' as any), DEFAULT_PUSH_TO_TALK_HOTKEY);
+  const normalizedPushToTalkHotkey = normalizeHotkeyList(legacyStore.get('pushToTalkHotkey'), DEFAULT_PUSH_TO_TALK_HOTKEY);
   if (JSON.stringify(normalizedPushToTalkHotkey) !== JSON.stringify(store.get('pushToTalkHotkey'))) {
     store.set('pushToTalkHotkey', normalizedPushToTalkHotkey);
   }
 
-  const normalizedCancelHotkey = normalizeHotkeyList(store.get('cancelHotkey' as any), DEFAULT_CANCEL_HOTKEY);
+  const normalizedCancelHotkey = normalizeHotkeyList(legacyStore.get('cancelHotkey'), DEFAULT_CANCEL_HOTKEY);
   if (JSON.stringify(normalizedCancelHotkey) !== JSON.stringify(store.get('cancelHotkey'))) {
     store.set('cancelHotkey', normalizedCancelHotkey);
   }
 
-  const storedSelectedGlobalStyleId = store.get('selectedGlobalStyleId' as any) as string | null | undefined;
+  const storedSelectedGlobalStyleId = legacyStore.get('selectedGlobalStyleId') as string | null | undefined;
   if (storedSelectedGlobalStyleId === undefined) {
     const migratedStyleId = migrateLegacyStyleSelection(
-      store.get('categoryStyleSelections' as any),
-      store.get('enabledStyleCategories' as any)
+      legacyStore.get('categoryStyleSelections'),
+      legacyStore.get('enabledStyleCategories')
     );
     store.set('selectedGlobalStyleId', migratedStyleId);
   } else {
     store.set('selectedGlobalStyleId', sanitizeSelectedGlobalStyleId(storedSelectedGlobalStyleId));
   }
 
-  store.delete('categoryStyleSelections' as any);
-  store.delete('enabledStyleCategories' as any);
+  legacyStore.delete('categoryStyleSelections');
+  legacyStore.delete('enabledStyleCategories');
   persistGroqApiKeyIfNeeded();
 
   const languageSelection = getEffectiveLanguageSelection({
-    language: store.get('language' as any),
-    selectedLanguages: store.get('selectedLanguages' as any),
-    autoDetectLanguage: store.get('autoDetectLanguage' as any),
+    language: legacyStore.get('language'),
+    selectedLanguages: legacyStore.get('selectedLanguages'),
+    autoDetectLanguage: legacyStore.get('autoDetectLanguage'),
   });
   store.set('selectedLanguages', languageSelection.selectedLanguages);
   store.set('autoDetectLanguage', languageSelection.autoDetectLanguage);
