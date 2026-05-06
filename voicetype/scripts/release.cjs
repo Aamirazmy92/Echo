@@ -44,22 +44,48 @@ function step(title) {
 // re-parses the joined command string and strips the quotes around args
 // containing characters like `:`, which then break commands like
 // `git commit -m "release: v1.0.6"`.
-const SHELL_REQUIRED = new Set(['npm', 'npx', 'gh', 'yarn', 'pnpm']);
+const CMD_SHIMS = new Set(['npm', 'npx', 'gh', 'yarn', 'pnpm']);
+
+function resolveCommand(cmd) {
+  return process.platform === 'win32' && CMD_SHIMS.has(cmd) ? `${cmd}.cmd` : cmd;
+}
 
 function run(cmd, args, opts = {}) {
   const printable = `${cmd} ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`;
   console.log(`  $ ${printable}`);
-  const useShell = process.platform === 'win32' && SHELL_REQUIRED.has(cmd);
-  const result = spawnSync(cmd, args, {
+
+  // On Windows, `.cmd` shims must be invoked through their `.cmd` file
+  // directly (not through `shell: true`) because `cmd.exe` re-encodes
+  // the joined command line in the active codepage, which mangles
+  // non-ASCII characters like em-dashes / smart quotes that often end
+  // up in release notes. Spawning the resolved `.cmd` directly with
+  // `shell: false` keeps the args as-is from the Node process.
+  const result = spawnSync(resolveCommand(cmd), args, {
     stdio: 'inherit',
     cwd: projectRoot,
-    shell: useShell,
+    shell: false,
     env: process.env,
+    windowsVerbatimArguments: false,
     ...opts,
   });
   if (result.status !== 0) {
     fail(`Command failed (exit ${result.status}): ${printable}`);
   }
+}
+
+function capture(cmd, args) {
+  const printable = `${cmd} ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`;
+  const result = spawnSync(resolveCommand(cmd), args, {
+    cwd: projectRoot,
+    shell: false,
+    env: process.env,
+    encoding: 'utf8',
+    windowsVerbatimArguments: false,
+  });
+  if (result.status !== 0) {
+    fail(`Command failed (exit ${result.status}): ${printable}\n${result.stderr || result.stdout || ''}`);
+  }
+  return result.stdout.trim();
 }
 
 function captureGit(args) {
@@ -129,6 +155,23 @@ if (missing.length > 0) {
   fail(`Missing build artifacts in dist/: ${missing.join(', ')}`);
 }
 console.log(`  ✓ Found ${expected.join(', ')}`);
+
+const appAsarPath = path.join(distDir, 'win-unpacked', 'resources', 'app.asar');
+if (!fs.existsSync(appAsarPath)) {
+  fail('Missing packaged app.asar in dist/win-unpacked/resources/.');
+}
+
+const asarEntries = capture('npx', ['asar', 'list', appAsarPath]).replace(/\\/g, '/');
+const requiredAsarEntries = [
+  '/.vite/build/main.js',
+  '/.vite/build/preload.js',
+  '/.vite/renderer/main_window/index.html',
+];
+const missingAsarEntries = requiredAsarEntries.filter((entry) => !asarEntries.includes(entry));
+if (missingAsarEntries.length > 0) {
+  fail(`Packaged app.asar is missing required runtime files: ${missingAsarEntries.join(', ')}`);
+}
+console.log(`  ✓ app.asar contains ${requiredAsarEntries.join(', ')}`);
 
 // ---- 6. Commit + tag --------------------------------------------------------
 
