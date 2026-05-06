@@ -901,12 +901,23 @@ function registerWindowSecurityHandlers(window: BrowserWindow) {
 function setupContentSecurityPolicy(): void {
   const isDev = !app.isPackaged;
 
+  // In packaged builds the renderer is served from `file://`, and
+  // Chromium does NOT treat `'self'` as matching the `file:` scheme for
+  // scheme-restricted directives (script-src, img-src, font-src, style-src,
+  // media-src). Without `file:` listed explicitly, the Vite-emitted
+  // `<script type="module" src="./assets/...js">` is blocked and React
+  // never mounts — the splash just sits there. Allowing `file:` keeps
+  // the production CSP strict (no remote code / images / fonts) while
+  // unblocking the locally-shipped bundle. In dev everything is served
+  // from http://localhost by Vite, so `'self'` is enough there.
+  const localScheme = isDev ? '' : ' file:';
+
   const directives = [
     "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https://flagcdn.com",
-    "font-src 'self' data:",
+    `script-src 'self'${localScheme}`,
+    `style-src 'self'${localScheme} 'unsafe-inline'`,
+    `img-src 'self'${localScheme} data: blob: https://flagcdn.com`,
+    `font-src 'self'${localScheme} data:`,
     isDev
       // Dev: Vite serves modules over http and HMR over ws on localhost.
       // Scope the allowance tightly to localhost loopback so we don't
@@ -915,7 +926,7 @@ function setupContentSecurityPolicy(): void {
       // Prod: renderer talks to nobody directly. All network egress
       // (Supabase, Groq, GitHub releases) happens from main.
       : "connect-src 'self'",
-    "media-src 'self' blob:",
+    `media-src 'self'${localScheme} blob:`,
     "object-src 'none'",
     "base-uri 'self'",
     "frame-src 'none'",

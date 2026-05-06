@@ -15,17 +15,21 @@ const NATIVE_OR_RUNTIME_EXTERNALS = [
   'sharp',
 ];
 
-export default defineConfig({
-  // The Forge Vite plugin used to inject these as build-time constants.
-  // The standalone `vite build` we run for electron-builder does not, so
-  // any reference to them in main.js / preload.js would throw a
-  // ReferenceError in the packaged app. Replace them with sensible
-  // production values: no dev server URL, and the `main_window` renderer
-  // entry name that matches `vite.renderer.config.ts`.
-  define: {
-    MAIN_WINDOW_VITE_DEV_SERVER_URL: 'undefined',
-    MAIN_WINDOW_VITE_NAME: JSON.stringify('main_window'),
-  },
+export default defineConfig(({ command }) => ({
+  // Only inject these constants when the standalone `vite build` runs
+  // (i.e. the electron-builder / NSIS pipeline). In Forge dev mode
+  // (`npm start` → `vite serve`) the Forge Vite plugin injects the
+  // real dev server URL at runtime — we must NOT override it to
+  // `undefined` there, or main.js would fall into the production
+  // branch and try to `loadFile` a renderer that hasn't been built.
+  ...(command === 'build'
+    ? {
+        define: {
+          MAIN_WINDOW_VITE_DEV_SERVER_URL: 'undefined',
+          MAIN_WINDOW_VITE_NAME: JSON.stringify('main_window'),
+        },
+      }
+    : {}),
   build: {
     ssr: true,
     outDir: '.vite/build',
@@ -51,4 +55,4 @@ export default defineConfig({
   resolve: {
     mainFields: ['module', 'jsnext:main', 'jsnext'],
   },
-});
+}));
