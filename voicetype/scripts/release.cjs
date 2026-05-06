@@ -39,13 +39,21 @@ function step(title) {
   console.log(`\n──▶ ${title}`);
 }
 
+// On Windows, `.cmd` shims (npm, gh, npx) can only be spawned through the
+// shell. Real `.exe`s (git, node) must NOT use shell:true because cmd.exe
+// re-parses the joined command string and strips the quotes around args
+// containing characters like `:`, which then break commands like
+// `git commit -m "release: v1.0.6"`.
+const SHELL_REQUIRED = new Set(['npm', 'npx', 'gh', 'yarn', 'pnpm']);
+
 function run(cmd, args, opts = {}) {
   const printable = `${cmd} ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`;
   console.log(`  $ ${printable}`);
+  const useShell = process.platform === 'win32' && SHELL_REQUIRED.has(cmd);
   const result = spawnSync(cmd, args, {
     stdio: 'inherit',
     cwd: projectRoot,
-    shell: process.platform === 'win32',
+    shell: useShell,
     env: process.env,
     ...opts,
   });
