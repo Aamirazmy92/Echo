@@ -51,12 +51,60 @@ function resolveCommand(cmd) {
 }
 
 function quoteForCmd(value) {
-  return `"${String(value).replace(/"/g, '\\"')}"`;
+  const text = String(value);
+  if (!/[ \t&()^|<>"]/.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function resolveNpmCliPath() {
+  const candidates = [
+    process.env.npm_execpath,
+    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.cjs'),
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
 }
 
 function spawnCommand(cmd, args, opts = {}) {
+  if (process.platform === 'win32' && cmd === 'npm') {
+    const npmCliPath = resolveNpmCliPath();
+    if (npmCliPath) {
+      return spawnSync(process.execPath, [npmCliPath, ...args], {
+        cwd: projectRoot,
+        shell: false,
+        env: process.env,
+        windowsVerbatimArguments: false,
+        ...opts,
+      });
+    }
+  }
+
+  if (process.platform === 'win32' && cmd === 'npx') {
+    const npmCliPath = resolveNpmCliPath();
+    if (npmCliPath) {
+      return spawnSync(process.execPath, [npmCliPath, 'exec', '--', ...args], {
+        cwd: projectRoot,
+        shell: false,
+        env: process.env,
+        windowsVerbatimArguments: false,
+        ...opts,
+      });
+    }
+  }
+
+  if (process.platform === 'win32' && cmd === 'gh') {
+    return spawnSync('gh', args, {
+      cwd: projectRoot,
+      shell: false,
+      env: process.env,
+      windowsVerbatimArguments: false,
+      ...opts,
+    });
+  }
+
   if (process.platform === 'win32' && CMD_SHIMS.has(cmd)) {
-    return spawnSync('cmd.exe', ['/d', '/c', [cmd, ...args].map(quoteForCmd).join(' ')], {
+    return spawnSync('cmd.exe', ['/d', '/c', [resolveCommand(cmd), ...args].map(quoteForCmd).join(' ')], {
       cwd: projectRoot,
       shell: false,
       env: process.env,
