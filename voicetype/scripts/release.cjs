@@ -50,6 +50,30 @@ function resolveCommand(cmd) {
   return process.platform === 'win32' && CMD_SHIMS.has(cmd) ? `${cmd}.cmd` : cmd;
 }
 
+function quoteForCmd(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
+function spawnCommand(cmd, args, opts = {}) {
+  if (process.platform === 'win32' && CMD_SHIMS.has(cmd)) {
+    return spawnSync('cmd.exe', ['/d', '/s', '/c', [cmd, ...args].map(quoteForCmd).join(' ')], {
+      cwd: projectRoot,
+      shell: false,
+      env: process.env,
+      windowsVerbatimArguments: true,
+      ...opts,
+    });
+  }
+
+  return spawnSync(resolveCommand(cmd), args, {
+    cwd: projectRoot,
+    shell: false,
+    env: process.env,
+    windowsVerbatimArguments: false,
+    ...opts,
+  });
+}
+
 function run(cmd, args, opts = {}) {
   const printable = `${cmd} ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`;
   console.log(`  $ ${printable}`);
@@ -60,30 +84,22 @@ function run(cmd, args, opts = {}) {
   // non-ASCII characters like em-dashes / smart quotes that often end
   // up in release notes. Spawning the resolved `.cmd` directly with
   // `shell: false` keeps the args as-is from the Node process.
-  const result = spawnSync(resolveCommand(cmd), args, {
+  const result = spawnCommand(cmd, args, {
     stdio: 'inherit',
-    cwd: projectRoot,
-    shell: false,
-    env: process.env,
-    windowsVerbatimArguments: false,
     ...opts,
   });
   if (result.status !== 0) {
-    fail(`Command failed (exit ${result.status}): ${printable}`);
+    fail(`Command failed (exit ${result.status ?? 'null'}): ${printable}${result.error ? `\n${result.error.message}` : ''}`);
   }
 }
 
 function capture(cmd, args) {
   const printable = `${cmd} ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`;
-  const result = spawnSync(resolveCommand(cmd), args, {
-    cwd: projectRoot,
-    shell: false,
-    env: process.env,
+  const result = spawnCommand(cmd, args, {
     encoding: 'utf8',
-    windowsVerbatimArguments: false,
   });
   if (result.status !== 0) {
-    fail(`Command failed (exit ${result.status}): ${printable}\n${result.stderr || result.stdout || ''}`);
+    fail(`Command failed (exit ${result.status ?? 'null'}): ${printable}\n${result.error?.message || result.stderr || result.stdout || ''}`);
   }
   return result.stdout.trim();
 }
