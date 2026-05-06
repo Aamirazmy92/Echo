@@ -995,7 +995,7 @@ export default function Dashboard({ settings: parentSettings }: DashboardProps) 
                 {/* Sticky day header — pins the current group's date label
                     to the top of the scroll region so the user always
                     knows which day they're looking at while scrolling. */}
-                <div className="sticky top-0 z-10 mb-2 bg-background px-1 pt-2 pb-1.5 text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <div className="sticky top-0 z-10 mb-2 bg-background px-1 pt-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   {groupLabel}
                 </div>
 
@@ -1053,17 +1053,17 @@ export default function Dashboard({ settings: parentSettings }: DashboardProps) 
                                 if (e.key === 'Enter') { e.preventDefault(); saveEdit(entry.id); }
                                 if (e.key === 'Escape') cancelEditing();
                               }}
-                              className="flex-1 rounded-lg border border-border bg-background/60 px-2.5 py-1.5 text-[16px] text-foreground outline-none focus:ring-2 focus:ring-ring/20"
+                              className="flex-1 rounded-lg border border-border bg-background/60 px-2.5 py-1.5 text-[15px] text-foreground outline-none focus:ring-2 focus:ring-ring/20"
                             />
                             <button type="button" onClick={(e) => { e.stopPropagation(); saveEdit(entry.id); }} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="Save changes" aria-label="Save changes"><Check size={14} /></button>
                             <button type="button" onClick={(e) => { e.stopPropagation(); cancelEditing(); }} className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Cancel editing" aria-label="Cancel editing"><X size={14} /></button>
                           </div>
                         ) : (
                           <div className="flex items-start gap-4">
-                            <span className="shrink-0 pt-0.5 text-[14px] font-medium text-muted-foreground">
+                            <span className="shrink-0 pt-0.5 text-[13px] font-medium text-muted-foreground">
                               {new Date(entry.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
-                            <p className="min-w-0 flex-1 text-[16px] leading-relaxed text-foreground">{entry.text}</p>
+                            <p className="min-w-0 flex-1 text-[15px] leading-relaxed text-foreground">{entry.text}</p>
                           </div>
                         )}
                       </div>

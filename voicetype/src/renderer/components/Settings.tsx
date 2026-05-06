@@ -1357,6 +1357,9 @@ function SidebarUpdateControl({
   }
 
   const disabled = state === 'unsupported' || isBusy;
+  const actionTooltip = state === 'idle'
+    ? 'Up to date — click again to check for new updates.'
+    : actionLabel;
 
   return (
     <div className="mt-4 border-t border-foreground/[0.04] px-3 pt-3">
@@ -1366,16 +1369,20 @@ function SidebarUpdateControl({
             Echo{appVersion ? ` v${appVersion}` : ''}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void onAction(action)}
-          disabled={disabled}
-          aria-label={actionLabel}
-          title={actionLabel}
-          className="settings-action-button inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-foreground transition-colors disabled:cursor-default disabled:opacity-45"
-        >
-          <Icon size={15} className={isChecking || isDownloading ? 'animate-spin' : undefined} />
-        </button>
+        <div className="group relative shrink-0">
+          <button
+            type="button"
+            onClick={() => void onAction(action)}
+            disabled={disabled}
+            aria-label={actionTooltip}
+            className="settings-action-button inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground transition-colors disabled:cursor-default disabled:opacity-45"
+          >
+            <Icon size={15} className={isChecking || isDownloading ? 'animate-spin' : undefined} />
+          </button>
+          <div className="pointer-events-none absolute bottom-full right-0 z-50 mb-2 w-max max-w-[220px] rounded-md bg-black px-2.5 py-1.5 text-center text-[12px] font-medium leading-snug text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+            {actionTooltip}
+          </div>
+        </div>
       </div>
     </div>
   );
