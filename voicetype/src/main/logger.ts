@@ -5,7 +5,7 @@ import path from 'path';
 /*
  * Lightweight structured logger for the main process.
  *
- * Why this exists: in packaged Squirrel installs, anything written to
+ * Why this exists: in packaged Windows installs, anything written to
  * `console.*` goes nowhere a user can find. Echo previously had a
  * one-off `appendDictationLog` helper in `index.ts` for the
  * transcription error path; this module generalises that so every

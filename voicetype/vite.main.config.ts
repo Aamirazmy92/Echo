@@ -32,8 +32,8 @@ export default defineConfig({
   // Vite plugin does NOT ship `node_modules` into `app.asar`, so anything
   // left external (other than the native modules above) will throw
   // "Cannot find module ..." at runtime. `noExternal: true` makes Vite
-  // inline `electron-updater`, `electron-store`, `openai`,
-  // `electron-squirrel-startup`, and all of their transitive deps.
+  // inline `electron-updater`, `electron-store`, and all of their
+  // transitive deps.
   ssr: {
     noExternal: true,
     external: NATIVE_OR_RUNTIME_EXTERNALS,

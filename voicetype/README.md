@@ -35,9 +35,9 @@ Useful scripts:
 | `npm run typecheck` | TypeScript check, no emit. |
 | `npm run lint` | ESLint over `src/`. |
 | `npm test` | Vitest (currently no tests). |
-| `npm run package` | Produce an unpacked `out/echo-win32-x64/` folder. |
-| `npm run make` | Produce a Squirrel installer at `out/make/squirrel.windows/x64/`. |
-| `npm run publish` | Build + upload a GitHub Release (auto-update source). |
+| `npm run package` | Produce an unpacked Forge package for local inspection. |
+| `npm run make` | Produce an NSIS installer plus `latest.yml` in `dist/`. |
+| `npm run publish` | Build + upload NSIS update assets to GitHub Releases. |
 | `node scripts/generate-icons.cjs` | Regenerate tray + app icons. |
 
 ---
@@ -64,17 +64,17 @@ Default hotkey is **Win + Space** (push-to-talk).
 | `%APPDATA%\Echo\whispercpp\models\ggml-base.bin` | Local model after download. |
 | `%LOCALAPPDATA%\Echo\session-data\` | Chromium cache (safe to delete; recreated on next launch). |
 
-Uninstalling via the Squirrel installer leaves these in place. Delete them manually if you want a clean slate.
+Uninstalling Echo leaves these in place. Delete them manually if you want a clean slate.
 
 ---
 
 ## Building a release for distribution
 
-The repo is wired to publish Squirrel `.exe` installers to a private GitHub repo, which `electron-updater` polls for updates.
+The repo is wired to publish NSIS `.exe` installers and `latest.yml` update metadata to a private GitHub repo, which `electron-updater` polls for updates.
 
 ### One-time setup
 
-1. Create a (private is fine) GitHub repo at `Aamirazmy92/Echo` to match `forge.config.ts`. Push this codebase to it.
+1. Create a (private is fine) GitHub repo at `Aamirazmy92/Echo` to match `electron-builder.config.cjs`. Push this codebase to it.
 2. Generate a GitHub Personal Access Token with `repo` scope.
 
 ### Each release
@@ -91,7 +91,7 @@ $env:GITHUB_TOKEN = "ghp_yourPATtokenhere"
 npm run publish
 ```
 
-This runs `verify-release-assets.cjs`, builds the installer, signs it (only if `SIGNING_CERT_PATH` and `SIGNING_CERT_PASSWORD` are set), and uploads `Echo-Setup.exe` + `RELEASES` to the GitHub release.
+This runs `verify-release-assets.cjs`, builds the installer, signs it when `SIGNING_CERT_PATH` and `SIGNING_CERT_PASSWORD` are set, and uploads the NSIS installer, blockmap, and `latest.yml` to the GitHub release.
 
 Already-installed copies will check for the new release on next launch and download it in the background. The update applies on app quit.
 

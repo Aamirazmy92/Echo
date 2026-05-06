@@ -34,19 +34,15 @@ if (missingRequired.length > 0) {
 
 // ---------- Code-signing enforcement ----------
 //
-// Squirrel.Windows applies updates by verifying that each new release was
-// signed with a cert that chains to the cert used for the *previous*
-// installed version. If we ever ship an unsigned `make`/`publish`, every
-// existing user is permanently stuck on whatever version they had — auto-
-// update will silently refuse to apply the unsigned package and there is
-// no in-app way to recover from it.
+// NSIS/electron-updater should ship signed installers for the best Windows
+// trust and update experience. Existing unsigned local smoke tests can opt
+// out explicitly, but public releases should always be signed.
 //
-// MakerSquirrel happily produces an unsigned installer when
-// SIGNING_CERT_PATH / SIGNING_CERT_PASSWORD are missing, so the guard has
-// to live here, before MakerSquirrel runs. Local dev builds that
-// genuinely don't need signing can opt out with `ECHO_ALLOW_UNSIGNED=1`.
+// electron-builder can produce unsigned installers when SIGNING_CERT_PATH /
+// SIGNING_CERT_PASSWORD are missing, so this guard fails fast before release
+// artifacts are generated.
 const lifecycleEvent = process.env.npm_lifecycle_event || '';
-const releaseLifecycles = new Set(['make', 'publish']);
+const releaseLifecycles = new Set(['make', 'make:nsis', 'publish', 'publish:nsis']);
 const isReleaseBuild = releaseLifecycles.has(lifecycleEvent);
 const allowUnsigned = process.env.ECHO_ALLOW_UNSIGNED === '1';
 
@@ -58,9 +54,7 @@ if (isReleaseBuild) {
     if (allowUnsigned) {
       console.warn(
         '\n[!] Building UNSIGNED release artifacts because ECHO_ALLOW_UNSIGNED=1.\n' +
-        '    Squirrel auto-update will refuse to apply this build for any\n' +
-        '    user already running a signed version of Echo. Use only for\n' +
-        '    local smoke tests, never for a release pushed to users.\n'
+        '    Use only for local smoke tests, never for a release pushed to users.\n'
       );
     } else {
       console.error(

@@ -1,9 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
-import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
-import { PublisherGithub } from '@electron-forge/publisher-github';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
@@ -20,16 +18,13 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const NATIVE_MAIN_DEPS = ['better-sqlite3', 'bindings', 'file-uri-to-path'];
 
 const bundledModelPath = path.join(__dirname, 'vendor', 'whispercpp', 'ggml-base.bin');
-const extraResource: NonNullable<ForgeConfig['packagerConfig']>['extraResource'] = [
+const extraResource = [
   'vendor/whispercpp/blas-bin',
   'assets',
-];
+] satisfies NonNullable<ForgeConfig['packagerConfig']>['extraResource'];
 
 if (fs.existsSync(bundledModelPath)) {
-  extraResource.push({
-    from: 'vendor/whispercpp/ggml-base.bin',
-    to: 'models/ggml-base.bin',
-  });
+  extraResource.push('vendor/whispercpp/ggml-base.bin');
 }
 
 // Only point to an icon if one actually exists on disk. Electron Packager
@@ -72,29 +67,7 @@ const config: ForgeConfig = {
     },
   },
   makers: [
-    new MakerSquirrel({
-      // Code signing — reads SIGNING_CERT_PATH and SIGNING_CERT_PASSWORD
-      // from env. The presence of these vars during `npm run make` /
-      // `publish` is enforced by `scripts/verify-release-assets.cjs`,
-      // which fails fast if either is missing (unless ECHO_ALLOW_UNSIGNED=1
-      // is set for an explicit local-only test build). If we ever
-      // shipped an unsigned release to users running a signed prior
-      // version, Squirrel would permanently refuse to auto-update them.
-      certificateFile: process.env.SIGNING_CERT_PATH,
-      certificatePassword: process.env.SIGNING_CERT_PASSWORD,
-      name: 'Echo',
-      ...(fs.existsSync(iconCandidate) ? { setupIcon: 'assets/icon.ico' } : {}),
-    }),
     new MakerZIP({}, ['win32']),
-  ],
-  publishers: [
-    new PublisherGithub({
-      repository: {
-        owner: 'Aamirazmy92',
-        name: 'Echo',
-      },
-      prerelease: false,
-    }),
   ],
   plugins: [
     // Moves any `.node` binaries it finds in node_modules out of app.asar
