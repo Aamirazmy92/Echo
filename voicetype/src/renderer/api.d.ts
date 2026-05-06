@@ -81,6 +81,7 @@ export interface EchoApi {
   windowMinimize: () => void;
   windowToggleMaximize: () => void;
   windowClose: () => void;
+  writeClipboardText: (text: string) => Promise<void>;
   reportRendererError: (scope: string, message: string, stack?: string) => void;
 
   // ── Auto-update ──

@@ -406,7 +406,7 @@ export default function Dashboard({ settings: parentSettings }: DashboardProps) 
   const handleCopy = async (text: string, id: number, event: React.MouseEvent) => {
     event.stopPropagation();
     try {
-      await navigator.clipboard.writeText(text);
+      await window.api.writeClipboardText(text);
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
 
@@ -582,7 +582,7 @@ export default function Dashboard({ settings: parentSettings }: DashboardProps) 
     if (entries.length === 0) return;
     const text = entries.map((e) => e.text).join('\n\n');
     try {
-      await navigator.clipboard.writeText(text);
+      await window.api.writeClipboardText(text);
       const toastEvent = new CustomEvent('show-toast', {
         detail: { message: `Copied ${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`, type: 'success' },
       });

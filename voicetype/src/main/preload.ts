@@ -97,6 +97,7 @@ contextBridge.exposeInMainWorld('api', {
   windowMinimize: () => ipcRenderer.send('window-minimize'),
   windowToggleMaximize: () => ipcRenderer.send('window-toggle-maximize'),
   windowClose: () => ipcRenderer.send('window-close'),
+  writeClipboardText: (text: string) => ipcRenderer.invoke('clipboard-write-text', text),
 
   reportRendererError: (scope: string, message: string, stack?: string) =>
     ipcRenderer.send('report-renderer-error', { scope, message, stack }),

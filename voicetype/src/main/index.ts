@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, session, shell, screen, crashReporter } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, session, shell, screen, crashReporter, clipboard } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import {
@@ -809,6 +809,13 @@ function registerAllIpcs() {
 
   ipcMain.on('window-close', () => {
     mainWindow?.hide();
+  });
+
+  ipcMain.handle('clipboard-write-text', (_, text: unknown) => {
+    if (typeof text !== 'string') {
+      throw new Error('Clipboard text must be a string.');
+    }
+    clipboard.writeText(text);
   });
 
   // Renderer-side errors flow into the same log file as main-process
