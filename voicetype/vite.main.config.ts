@@ -16,6 +16,16 @@ const NATIVE_OR_RUNTIME_EXTERNALS = [
 ];
 
 export default defineConfig({
+  // The Forge Vite plugin used to inject these as build-time constants.
+  // The standalone `vite build` we run for electron-builder does not, so
+  // any reference to them in main.js / preload.js would throw a
+  // ReferenceError in the packaged app. Replace them with sensible
+  // production values: no dev server URL, and the `main_window` renderer
+  // entry name that matches `vite.renderer.config.ts`.
+  define: {
+    MAIN_WINDOW_VITE_DEV_SERVER_URL: 'undefined',
+    MAIN_WINDOW_VITE_NAME: JSON.stringify('main_window'),
+  },
   build: {
     ssr: true,
     outDir: '.vite/build',
