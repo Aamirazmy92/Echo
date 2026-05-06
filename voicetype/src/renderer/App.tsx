@@ -11,6 +11,9 @@ import {
   BarChart3,
   Settings as SettingsIcon,
   PanelLeft,
+  Download,
+  Loader2,
+  RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
 import ToastHost from './components/toast/ToastHost';
@@ -20,7 +23,7 @@ import { AppState, AppTab, SpeechMetrics, Settings as SettingsType } from '../sh
 import DashboardView from './components/Dashboard';
 import Onboarding from './components/Onboarding';
 import MotionWarmup from './components/MotionWarmup';
-import UpdateNotch from './components/UpdateNotch';
+import type { UpdateStatusPayload } from './api';
 
 type IdleWindow = Window & typeof globalThis & {
   requestIdleCallback?: (callback: () => void) => number;
@@ -93,6 +96,69 @@ function SidebarIcon({ icon: Icon }: { icon: LucideIcon }) {
 
 function MainPanelSkeleton() {
   return <div className="h-full w-full bg-background" />;
+}
+
+function StartupUpdatePrompt({
+  status,
+  pending,
+  onDismiss,
+  onAction,
+}: {
+  status: UpdateStatusPayload;
+  pending: boolean;
+  onDismiss: () => void;
+  onAction: (action: 'download' | 'install') => Promise<void>;
+}) {
+  const isDownloading = status.state === 'downloading';
+  const isReady = status.state === 'ready';
+  const progress = typeof status.progress === 'number' ? status.progress : 0;
+  const title = isReady ? 'Update ready to install' : isDownloading ? 'Downloading update' : 'Update available';
+  const body = isReady
+    ? `Echo ${status.version ? `v${status.version}` : 'update'} has been downloaded. Restart Echo to finish installing it.`
+    : isDownloading
+      ? `Echo ${status.version ? `v${status.version}` : 'update'} is downloading. ${progress}% complete.`
+      : `Echo ${status.version ? `v${status.version}` : 'a new version'} is available. Download it now to get the latest fixes.`;
+  const action = isReady ? 'install' : 'download';
+  const ActionIcon = isReady ? RefreshCw : Download;
+
+  return (
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/20 px-6 backdrop-blur-[2px]">
+      <div className="w-full max-w-[420px] rounded-2xl border border-border bg-background p-6 shadow-[0_24px_70px_rgba(15,23,42,0.24)]">
+        <div className="flex items-start gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+            {isDownloading ? <Loader2 size={20} className="animate-spin" /> : <ActionIcon size={20} />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-lg font-semibold text-foreground">{title}</div>
+            <div className="mt-1.5 text-sm leading-6 text-muted-foreground">{body}</div>
+            {isDownloading ? (
+              <div className="mt-4 h-2 overflow-hidden rounded-full bg-foreground/10">
+                <div className="h-full rounded-full bg-emerald-600 transition-[width]" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="settings-action-button h-9 rounded-md px-4 text-sm font-medium text-foreground transition-colors"
+          >
+            Later
+          </button>
+          <button
+            type="button"
+            onClick={() => void onAction(action)}
+            disabled={pending || isDownloading}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition-colors hover:bg-emerald-800 disabled:cursor-default disabled:opacity-70"
+          >
+            {pending || isDownloading ? <Loader2 size={15} className="animate-spin" /> : <ActionIcon size={15} />}
+            {isReady ? 'Restart now' : isDownloading ? 'Downloading' : 'Download update'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 const OFFLINE_SAMPLE_RATE = 16000;
@@ -205,6 +271,9 @@ export default function App() {
   const [isSidebarCompact, setIsSidebarCompact] = useState(false);
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [startupUpdateStatus, setStartupUpdateStatus] = useState<UpdateStatusPayload | null>(null);
+  const [isStartupUpdateDismissed, setIsStartupUpdateDismissed] = useState(false);
+  const [isStartupUpdateActionPending, setIsStartupUpdateActionPending] = useState(false);
   const appStateRef = useRef<AppState>('idle');
   const settingsRef = useRef<SettingsType | null>(null);
   const devicesLoadedRef = useRef(false);
@@ -801,6 +870,46 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    void window.api.updateGetStatus().then((status) => {
+      if (!cancelled) setStartupUpdateStatus(status);
+    }).catch((error) => {
+      console.error('Failed to load startup update status:', error);
+    });
+
+    const unsubscribe = window.api.onUpdateStatus((status) => {
+      setStartupUpdateStatus(status);
+      if (status.state !== 'available' && status.state !== 'ready') {
+        setIsStartupUpdateActionPending(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  const handleStartupUpdateAction = useCallback(async (action: 'download' | 'install') => {
+    setIsStartupUpdateActionPending(true);
+    try {
+      if (action === 'download') {
+        await window.api.updateDownload();
+      } else {
+        await window.api.updateInstall();
+      }
+      if (action === 'download') {
+        setIsStartupUpdateDismissed(true);
+      }
+    } catch (error) {
+      console.error('Startup update action failed:', error);
+      toastDispatch.error('Could not start the update. Try again from Settings.');
+      setIsStartupUpdateActionPending(false);
+    }
+  }, []);
+
+  useEffect(() => {
     const loadInitialData = async () => {
       const s = await window.api.getSettings() as SettingsType;
       applySettingsSnapshot(s);
@@ -861,6 +970,11 @@ export default function App() {
     { id: 'style', label: 'Style', icon: Type },
     { id: 'insights', label: 'Insights', icon: BarChart3 },
   ];
+  const shouldShowStartupUpdatePrompt = !!(
+    startupUpdateStatus &&
+    !isStartupUpdateDismissed &&
+    ['available', 'downloading', 'ready'].includes(startupUpdateStatus.state)
+  );
 
   return (
     <div className="h-screen overflow-hidden text-foreground" style={{ background: 'hsl(var(--app-bg))' }}>
@@ -990,8 +1104,6 @@ export default function App() {
             {/* Subtle separator between primary nav and the Settings entry. */}
             <div className="mx-3 my-2 h-px bg-black/[0.035]" />
 
-            <UpdateNotch compact={isSidebarCompact} />
-
             {/* Settings — pinned to bottom */}
             <div>
               <button
@@ -1068,6 +1180,15 @@ export default function App() {
             CustomEvent that several components still dispatch. */}
         <ToastHost />
       </div>
+
+      {shouldShowStartupUpdatePrompt && startupUpdateStatus ? (
+        <StartupUpdatePrompt
+          status={startupUpdateStatus}
+          pending={isStartupUpdateActionPending}
+          onDismiss={() => setIsStartupUpdateDismissed(true)}
+          onAction={handleStartupUpdateAction}
+        />
+      ) : null}
 
     </div>
   );

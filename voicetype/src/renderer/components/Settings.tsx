@@ -913,7 +913,7 @@ export default memo(function SettingsView({
 
   const normalizedSettingsQuery = deferredSettingsQuery.trim().toLowerCase();
   const hasSettingsSearch = normalizedSettingsQuery.length > 0;
-  const matchesSettingsSearch = (...values: Array<string | undefined>) =>
+  const matchesSettingsSearch = (...values: Array<string | null | undefined>) =>
     !hasSettingsSearch
     || values.some((value) => value?.toLowerCase().includes(normalizedSettingsQuery));
 
@@ -953,7 +953,6 @@ export default memo(function SettingsView({
   );
   const showSystemCloudKey = matchesSettingsSearch(
     'system',
-    'cloud api key',
     'api key',
     'groq',
     'cloud transcription',
@@ -988,6 +987,16 @@ export default memo(function SettingsView({
   );
   const hasSystemMatches =
     showSystemLaunch || showSystemOverlay || showSystemVisibility || showSystemPosition || showSystemMode || showSystemCloudKey;
+  const showSystemUpdates = matchesSettingsSearch(
+    'system',
+    'updates',
+    'update',
+    'check for updates',
+    'download update',
+    'install update',
+    updateStatus?.version,
+    updateStatus?.state
+  );
 
   // Account content is fetched live (session, sync status). It doesn't
   // map onto any of the indexed labels, so a simple keyword check
@@ -998,7 +1007,7 @@ export default memo(function SettingsView({
   const filteredSidebarItems = sidebarItems.filter((item) => {
     if (!hasSettingsSearch) return true;
     if (item.id === 'General') return hasGeneralMatches;
-    if (item.id === 'System') return hasSystemMatches;
+    if (item.id === 'System') return hasSystemMatches || showSystemUpdates;
     if (item.id === 'Account') return hasAccountMatches;
     return item.label.toLowerCase().includes(normalizedSettingsQuery);
   });
@@ -1062,12 +1071,6 @@ export default memo(function SettingsView({
               </div>
             )}
           </div>
-          <SidebarUpdateControl
-            appVersion={appVersion}
-            status={updateStatus}
-            pending={updateActionPending}
-            onAction={handleUpdateAction}
-          />
         </aside>
 
         {/* Content Area */}
@@ -1147,8 +1150,18 @@ export default memo(function SettingsView({
                 </div>
               ) : activeCategory === 'Account' && hasAccountMatches ? (
                 <AccountView />
-              ) : activeCategory === 'System' && hasSystemMatches ? (
+              ) : activeCategory === 'System' && (hasSystemMatches || showSystemUpdates) ? (
                 <div className="space-y-6">
+                  {showSystemUpdates && (
+                    <UpdateSettingsPanel
+                      appVersion={appVersion}
+                      status={updateStatus}
+                      pending={updateActionPending}
+                      onAction={handleUpdateAction}
+                    />
+                  )}
+
+                  {(showSystemLaunch || showSystemOverlay || showSystemVisibility || showSystemPosition) && (
                   <section>
                     <h2 className="mb-3 text-base font-semibold text-foreground">App settings</h2>
                     <div className="overflow-hidden rounded-xl border border-border bg-background">
@@ -1184,6 +1197,7 @@ export default memo(function SettingsView({
                       )}
                     </div>
                   </section>
+                  )}
 
                   {(showSystemMode || showSystemCloudKey) && (
                     <section>
@@ -1316,7 +1330,7 @@ export default memo(function SettingsView({
   );
 });
 
-function SidebarUpdateControl({
+function UpdateSettingsPanel({
   appVersion,
   status,
   pending,
@@ -1335,59 +1349,91 @@ function SidebarUpdateControl({
 
   let action: 'check' | 'download' | 'install' = 'check';
   let actionLabel = 'Check for updates';
+  let title = 'Updates';
+  let description = appVersion ? `Echo v${appVersion} is installed.` : 'Manage Echo updates.';
   let Icon = RefreshCw;
 
   if (state === 'unsupported') {
     actionLabel = 'Updates unavailable';
+    description = 'Automatic updates are unavailable in this build.';
   } else if (state === 'idle') {
     actionLabel = 'Check again';
+    description = appVersion ? `Echo v${appVersion} is up to date.` : 'Echo is up to date.';
   } else if (state === 'checking') {
     actionLabel = 'Checking';
+    description = 'Checking GitHub for the latest Echo release.';
     Icon = Loader2;
   } else if (state === 'available') {
     action = 'download';
     actionLabel = 'Download update';
+    title = 'Update available';
+    description = status?.version ? `Echo v${status.version} is available to download.` : 'A new Echo update is available to download.';
     Icon = Download;
   } else if (state === 'downloading') {
     actionLabel = `Downloading ${progress}%`;
+    title = 'Downloading update';
+    description = status?.version ? `Echo v${status.version} is downloading.` : 'Echo update is downloading.';
     Icon = Loader2;
   } else if (state === 'ready') {
     action = 'install';
     actionLabel = 'Restart to install';
+    title = 'Update ready to install';
+    description = status?.version ? `Echo v${status.version} has been downloaded. Restart Echo to install it.` : 'Echo update has been downloaded. Restart Echo to install it.';
   }
 
   const disabled = state === 'unsupported' || isBusy;
-  const actionTooltip = state === 'idle'
-    ? 'Up to date — click again to check for new updates.'
-    : actionLabel;
 
   return (
-    <div className="mt-4 border-t border-foreground/[0.04] px-3 pt-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-[13px] font-medium text-foreground">
-            Echo{appVersion ? ` v${appVersion}` : ''}
+    <section>
+      <h2 className="mb-3 text-base font-semibold text-foreground">Updates</h2>
+      <div className="overflow-hidden rounded-xl border border-border bg-background">
+        {(state === 'available' || state === 'downloading' || state === 'ready') && (
+          <div className="border-b border-foreground/5 bg-emerald-50/70 px-5 py-4 text-emerald-950">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/80 text-emerald-700">
+                <Icon size={18} className={isDownloading ? 'animate-spin' : undefined} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-base font-semibold">{title}</div>
+                <div className="mt-1 text-sm leading-5 text-emerald-950/70">{description}</div>
+                {isDownloading ? (
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-emerald-900/10">
+                    <div className="h-full rounded-full bg-emerald-700 transition-[width]" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
+                  </div>
+                ) : null}
+              </div>
+              {(state === 'available' || state === 'ready') && (
+                <button
+                  type="button"
+                  onClick={() => void onAction(action)}
+                  disabled={pending}
+                  className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-800 disabled:cursor-default disabled:opacity-70"
+                >
+                  {pending ? <Loader2 size={14} className="animate-spin" /> : <Icon size={14} />}
+                  {pending ? 'Starting' : actionLabel}
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="group relative shrink-0">
+        )}
+        <RowV2
+          label={`Echo${appVersion ? ` v${appVersion}` : ''}`}
+          description={state === 'error' && status?.error ? status.error : description}
+        >
           <button
             type="button"
             onClick={() => void onAction(action)}
             disabled={disabled}
-            aria-label={actionTooltip}
-            className="settings-action-button inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground transition-colors disabled:cursor-default disabled:opacity-45"
+            className="settings-action-button inline-flex h-8 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium text-foreground transition-colors disabled:cursor-default disabled:opacity-45"
           >
             <Icon size={15} className={isChecking || isDownloading ? 'animate-spin' : undefined} />
+            {actionLabel}
           </button>
-          <div className="pointer-events-none absolute bottom-full right-0 z-50 mb-2 w-[180px] rounded-md bg-black px-2.5 py-1.5 text-center text-[12px] font-medium leading-snug text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
-            {actionTooltip}
-          </div>
-        </div>
+        </RowV2>
       </div>
-    </div>
+    </section>
   );
 }
-
 function RowV2({
   label,
   description,
