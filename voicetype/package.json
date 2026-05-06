@@ -16,6 +16,7 @@
     "build:bundles": "vite build --config vite.main.config.ts && vite build --config vite.preload.config.ts && vite build --config vite.renderer.config.ts",
     "make:nsis": "npm run verify:release-assets && npm run build:bundles && electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish never",
     "publish:nsis": "npm run verify:release-assets && npm run build:bundles && electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish always",
+    "release": "node scripts/release.cjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "node ./node_modules/eslint/bin/eslint.js src/ --ext .ts,.tsx",

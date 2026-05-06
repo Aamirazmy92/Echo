@@ -10,6 +10,12 @@ import path from 'path';
 // so the Forge plugin picks it up and packages it into `app.asar`.
 export default defineConfig({
   root: 'src/renderer',
+  // Use relative asset URLs so the built index.html / overlay.html work
+  // when loaded over `file://` from inside the packaged app.asar. With
+  // the default `base: '/'`, Vite emits `<script src="/assets/...js">`
+  // which resolves against the filesystem root at runtime, the bundle
+  // 404s, and React never replaces the splash screen.
+  base: './',
   build: {
     outDir: path.resolve(__dirname, '.vite/renderer/main_window'),
     emptyOutDir: true,
