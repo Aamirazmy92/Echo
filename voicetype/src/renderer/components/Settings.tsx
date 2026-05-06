@@ -1379,7 +1379,7 @@ function SidebarUpdateControl({
           >
             <Icon size={15} className={isChecking || isDownloading ? 'animate-spin' : undefined} />
           </button>
-          <div className="pointer-events-none absolute bottom-full right-0 z-50 mb-2 w-max max-w-[220px] rounded-md bg-black px-2.5 py-1.5 text-center text-[12px] font-medium leading-snug text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+          <div className="pointer-events-none absolute bottom-full right-0 z-50 mb-2 w-[180px] rounded-md bg-black px-2.5 py-1.5 text-center text-[12px] font-medium leading-snug text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
             {actionTooltip}
           </div>
         </div>
