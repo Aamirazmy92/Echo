@@ -1071,6 +1071,12 @@ export default memo(function SettingsView({
               </div>
             )}
           </div>
+          <SidebarUpdatePanel
+            appVersion={appVersion}
+            status={updateStatus}
+            pending={updateActionPending}
+            onAction={handleUpdateAction}
+          />
         </aside>
 
         {/* Content Area */}
@@ -1152,15 +1158,6 @@ export default memo(function SettingsView({
                 <AccountView />
               ) : activeCategory === 'System' && (hasSystemMatches || showSystemUpdates) ? (
                 <div className="space-y-6">
-                  {showSystemUpdates && (
-                    <UpdateSettingsPanel
-                      appVersion={appVersion}
-                      status={updateStatus}
-                      pending={updateActionPending}
-                      onAction={handleUpdateAction}
-                    />
-                  )}
-
                   {(showSystemLaunch || showSystemOverlay || showSystemVisibility || showSystemPosition) && (
                   <section>
                     <h2 className="mb-3 text-base font-semibold text-foreground">App settings</h2>
@@ -1330,7 +1327,7 @@ export default memo(function SettingsView({
   );
 });
 
-function UpdateSettingsPanel({
+function SidebarUpdatePanel({
   appVersion,
   status,
   pending,
@@ -1349,87 +1346,68 @@ function UpdateSettingsPanel({
 
   let action: 'check' | 'download' | 'install' = 'check';
   let actionLabel = 'Check for updates';
-  let title = 'Updates';
-  let description = appVersion ? `Echo v${appVersion} is installed.` : 'Manage Echo updates.';
+  let title = appVersion ? `Echo v${appVersion}` : 'Echo';
+  let description = 'Manage updates.';
   let Icon = RefreshCw;
 
   if (state === 'unsupported') {
     actionLabel = 'Updates unavailable';
-    description = 'Automatic updates are unavailable in this build.';
+    description = 'Updates unavailable.';
   } else if (state === 'idle') {
     actionLabel = 'Check again';
-    description = appVersion ? `Echo v${appVersion} is up to date.` : 'Echo is up to date.';
+    description = 'Up to date.';
   } else if (state === 'checking') {
     actionLabel = 'Checking';
-    description = 'Checking GitHub for the latest Echo release.';
+    description = 'Checking for updates.';
     Icon = Loader2;
   } else if (state === 'available') {
     action = 'download';
     actionLabel = 'Download update';
     title = 'Update available';
-    description = status?.version ? `Echo v${status.version} is available to download.` : 'A new Echo update is available to download.';
+    description = status?.version ? `Echo v${status.version} is ready.` : 'New version ready.';
     Icon = Download;
   } else if (state === 'downloading') {
-    actionLabel = `Downloading ${progress}%`;
+    actionLabel = `${progress}%`;
     title = 'Downloading update';
-    description = status?.version ? `Echo v${status.version} is downloading.` : 'Echo update is downloading.';
+    description = `${progress}% complete.`;
     Icon = Loader2;
   } else if (state === 'ready') {
     action = 'install';
-    actionLabel = 'Restart to install';
+    actionLabel = 'Restart';
     title = 'Update ready to install';
-    description = status?.version ? `Echo v${status.version} has been downloaded. Restart Echo to install it.` : 'Echo update has been downloaded. Restart Echo to install it.';
+    description = status?.version ? `Echo v${status.version} downloaded.` : 'Update downloaded.';
   }
 
   const disabled = state === 'unsupported' || isBusy;
 
   return (
-    <section>
-      <h2 className="mb-3 text-base font-semibold text-foreground">Updates</h2>
-      <div className="overflow-hidden rounded-xl border border-border bg-background">
-        {(state === 'available' || state === 'downloading' || state === 'ready') && (
-          <div className="border-b border-foreground/5 bg-emerald-50/70 px-5 py-4 text-emerald-950">
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/80 text-emerald-700">
-                <Icon size={18} className={isDownloading ? 'animate-spin' : undefined} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="text-base font-semibold">{title}</div>
-                <div className="mt-1 text-sm leading-5 text-emerald-950/70">{description}</div>
-                {isDownloading ? (
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-emerald-900/10">
-                    <div className="h-full rounded-full bg-emerald-700 transition-[width]" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
-                  </div>
-                ) : null}
-              </div>
-              {(state === 'available' || state === 'ready') && (
-                <button
-                  type="button"
-                  onClick={() => void onAction(action)}
-                  disabled={pending}
-                  className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-800 disabled:cursor-default disabled:opacity-70"
-                >
-                  {pending ? <Loader2 size={14} className="animate-spin" /> : <Icon size={14} />}
-                  {pending ? 'Starting' : actionLabel}
-                </button>
-              )}
+    <section className="mt-4 border-t border-foreground/[0.04] px-2 pt-3">
+      <div className="rounded-xl border border-border bg-background/80 p-3 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+        <div className="flex items-start gap-2.5">
+          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${state === 'available' || state === 'downloading' || state === 'ready' ? 'bg-emerald-50 text-emerald-700' : 'bg-muted text-muted-foreground'}`}>
+            <Icon size={16} className={isChecking || isDownloading ? 'animate-spin' : undefined} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[13px] font-semibold text-foreground">{title}</div>
+            <div className="mt-0.5 line-clamp-2 text-[12px] leading-4 text-muted-foreground">
+              {state === 'error' && status?.error ? status.error : description}
             </div>
           </div>
-        )}
-        <RowV2
-          label={`Echo${appVersion ? ` v${appVersion}` : ''}`}
-          description={state === 'error' && status?.error ? status.error : description}
+        </div>
+        {isDownloading ? (
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-foreground/10">
+            <div className="h-full rounded-full bg-emerald-700 transition-[width]" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
+          </div>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => void onAction(action)}
+          disabled={disabled}
+          className="settings-action-button mt-3 inline-flex h-8 w-full items-center justify-center gap-2 rounded-md px-3 text-[12px] font-semibold text-foreground transition-colors disabled:cursor-default disabled:opacity-45"
         >
-          <button
-            type="button"
-            onClick={() => void onAction(action)}
-            disabled={disabled}
-            className="settings-action-button inline-flex h-8 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium text-foreground transition-colors disabled:cursor-default disabled:opacity-45"
-          >
-            <Icon size={15} className={isChecking || isDownloading ? 'animate-spin' : undefined} />
-            {actionLabel}
-          </button>
-        </RowV2>
+          <Icon size={14} className={isChecking || isDownloading ? 'animate-spin' : undefined} />
+          {pending ? 'Starting' : actionLabel}
+        </button>
       </div>
     </section>
   );
