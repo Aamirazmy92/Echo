@@ -11,7 +11,9 @@ export function isSelectableAudioInputDevice(device: {
   );
 }
 
-export function dedupeAudioInputDevices<T extends { deviceId: string }>(devices: T[]): T[] {
+export function dedupeAudioInputDevices<
+  T extends { deviceId: string; kind: MediaDeviceKind | string },
+>(devices: T[]): T[] {
   const seen = new Set<string>();
   const result: T[] = [];
 

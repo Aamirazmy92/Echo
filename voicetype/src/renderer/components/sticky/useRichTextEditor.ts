@@ -116,12 +116,11 @@ function wrapContentInOutlineRow(content: HTMLElement, role: 'toggle' | 'gutter'
 }
 
 function ensureOutlineChildren(outline: HTMLElement): HTMLDivElement {
-  let children = outline.querySelector(':scope > .sticky-outline-children');
-  if (!(children instanceof HTMLDivElement)) {
-    children = document.createElement('div');
-    children.className = 'sticky-outline-children';
-    outline.appendChild(children);
-  }
+  const existing = outline.querySelector(':scope > .sticky-outline-children');
+  if (existing instanceof HTMLDivElement) return existing;
+  const children = document.createElement('div');
+  children.className = 'sticky-outline-children';
+  outline.appendChild(children);
   return children;
 }
 
@@ -216,7 +215,7 @@ function prepareOutlineParent(previous: HTMLElement): HTMLDivElement {
   if (previous.classList.contains('sticky-outline')) {
     previous.setAttribute('data-expanded', 'true');
     ensureOutlineRootToggle(previous);
-    return previous;
+    return previous as HTMLDivElement;
   }
 
   if (previous.classList.contains('sticky-outline-row')) {

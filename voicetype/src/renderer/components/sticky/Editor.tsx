@@ -113,7 +113,7 @@ export default function Editor({ editor, title, onTitleChange, meta }: EditorPro
   useEffect(() => {
     if (formatPopover === null) return;
 
-    const handlePointerDown = (event: MouseEvent) => {
+    const handlePointerDown = (event: globalThis.MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) {
         closeFormatPopover();
