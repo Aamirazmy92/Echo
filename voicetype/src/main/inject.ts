@@ -263,7 +263,52 @@ function _isSendInputHelperReady(): boolean {
   return sendInputHelperReady && !!sendInputHelper && !sendInputHelper.killed;
 }
 
-async function _typeWithSendInput(text: string): Promise<void> {
+// Process names (lower-cased, .exe stripped) where synthetic Ctrl+V is not
+// reliably a paste shortcut. Two cases:
+//   1. Standalone terminals (conhost, WindowsTerminal, etc.) — Ctrl+V is
+//      forwarded to the foreground TUI as a literal ^V control character
+//      instead of being intercepted as paste.
+//   2. Electron-based IDEs whose integrated terminal panel rebinds paste to
+//      Ctrl+Shift+V (Cursor, VS Code, Windsurf, VSCodium) — when that panel
+//      has focus, Ctrl+V also reaches the shell as ^V.
+// For both, we type characters directly via KEYEVENTF_UNICODE so each char
+// becomes a WM_CHAR the terminal converts to stdin input. Direct typing also
+// works in these IDEs' editor surfaces, so over-matching is safe.
+const TERMINAL_PROCESS_NAMES = new Set([
+  // Standalone terminals
+  'windowsterminal',
+  'wt',
+  'openconsole',
+  'conhost',
+  'powershell',
+  'pwsh',
+  'cmd',
+  'wezterm',
+  'wezterm-gui',
+  'alacritty',
+  'mintty',
+  'hyper',
+  'tabby',
+  'conemu64',
+  'conemu',
+  'cmder',
+  // Electron IDEs with integrated terminals that don't bind Ctrl+V to paste
+  'cursor',
+  'code',
+  'code - insiders',
+  'codium',
+  'vscodium',
+  'windsurf',
+  'trae',
+]);
+
+function isTerminalApp(name: string | undefined | null): boolean {
+  if (!name) return false;
+  const normalized = name.toLowerCase().replace(/\.exe$/, '').trim();
+  return TERMINAL_PROCESS_NAMES.has(normalized);
+}
+
+async function typeWithSendInput(text: string): Promise<void> {
   await ensureSendInputHelper();
 
   if (!sendInputHelper) {
@@ -337,8 +382,16 @@ function pasteWithAppleScript(): Promise<void> {
   });
 }
 
-export async function injectText(text: string): Promise<void> {
+export async function injectText(text: string, activeAppName?: string): Promise<void> {
   if (process.platform === 'win32') {
+    // Terminals don't treat synthetic Ctrl+V as paste — the keystroke is
+    // forwarded to the foreground TUI as a literal control character. Type
+    // each char as a Unicode WM_CHAR instead so dictation lands in shells
+    // and TUIs (Claude Code, vim, PowerShell prompt) like real typing.
+    if (isTerminalApp(activeAppName)) {
+      await typeWithSendInput(text);
+      return;
+    }
     await pasteWithSendInput(text);
     return;
   }

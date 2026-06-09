@@ -8,6 +8,8 @@ import type {
   DictationEntry,
   DictionaryItem,
   DictionaryItemInput,
+  Note,
+  NoteInput,
   Settings,
   Snippet,
   SnippetInput,
@@ -17,6 +19,15 @@ import type {
 type DashboardData = {
   stats: { totalWords: number; totalSessions: number; todayWords: number; avgSessionMs: number };
   history: DictationEntry[];
+};
+
+export type BasicUsagePayload = {
+  tier: 'anonymous' | 'free' | 'pro';
+  used: number;
+  cap: number;
+  remaining: number;
+  exhausted: boolean;
+  message?: string;
 };
 
 type ModelDownloadProgress = {
@@ -37,12 +48,14 @@ export interface EchoApi {
   getInitialTheme: () => 'light' | 'dark';
   getAppVersion: () => Promise<string>;
   getSettings: () => Promise<Settings>;
+  refreshTrayMenu: () => Promise<void>;
   saveSettings: (patch: Partial<Settings>) => Promise<Settings>;
   suspendHotkey: () => Promise<void>;
   cancelRecordingStart: () => Promise<void>;
   cancelDictation: () => Promise<void>;
   resumeHotkey: () => Promise<Settings>;
   getDashboardData: (limit?: number, offset?: number) => Promise<DashboardData>;
+  basicUsageGet: () => Promise<BasicUsagePayload>;
   getHistory: (limit: number, offset: number) => Promise<DictationEntry[]>;
   exportHistory: (format: 'csv' | 'json') => Promise<string>;
   updateHistoryEntry: (id: number, text: string) => Promise<DictationEntry | null>;
@@ -55,11 +68,21 @@ export interface EchoApi {
   getSnippets: () => Promise<Snippet[]>;
   saveSnippet: (snippet: SnippetInput) => Promise<Snippet>;
   deleteSnippet: (id: number) => Promise<void>;
+  getNotes: () => Promise<Note[]>;
+  saveNote: (note: NoteInput) => Promise<Note>;
+  deleteNote: (id: number) => Promise<void>;
+  toggleNotePin: (id: number, pinned: boolean) => Promise<Note>;
+  openStickyNoteWindow: (noteId?: number, options?: { x?: number; y?: number }) => Promise<void>;
+  createNewStickyNoteWindow: (
+    note?: number | { noteId?: number; title: string; body: string },
+    options?: { x?: number; y?: number },
+  ) => Promise<void>;
+  attachNoteToStickyWindow: (
+    note: { noteId?: number; title: string; body: string },
+    point: { x: number; y: number }
+  ) => Promise<boolean>;
   getStats: () => Promise<{ totalWords: number; totalSessions: number; todayWords: number; avgSessionMs: number }>;
   getCurrentApp: () => Promise<string>;
-  openApiKeyPage: () => void;
-  testGroqApiKey: (key: string) => Promise<{ ok: true } | { ok: false; error: string }>;
-  testSavedGroqApiKey: () => Promise<{ ok: true } | { ok: false; error: string }>;
   transcribeAudio: (
     buffer: ArrayBuffer,
     duration: number,
@@ -70,6 +93,7 @@ export interface EchoApi {
   onStopRecording: (cb: () => void) => () => void;
   onCancelDictation: (cb: () => void) => () => void;
   onTranscriptionResult: (cb: (entry: DictationEntry | null) => void) => () => void;
+  onBasicUsageLimitReached: (cb: (payload: BasicUsagePayload) => void) => () => void;
   onError: (cb: (msg: string) => void) => () => void;
   onNavigateTab: (cb: (tab: AppTab) => void) => () => void;
   onOverlayState: (cb: (state: AppState, extra?: unknown) => void) => () => void;
@@ -81,7 +105,16 @@ export interface EchoApi {
   windowMinimize: () => void;
   windowToggleMaximize: () => void;
   windowClose: () => void;
+  closeCurrentWindow: () => void;
+  forceCloseCurrentWindow: () => void;
+  toggleCurrentWindowMaximize: () => void;
+  expandCurrentWindowForWriting: () => void;
+  onNotesUpdated: (cb: () => void) => () => void;
+  onOpenNoteInSticky: (cb: (note: Note) => void) => () => void;
+  onNewBlankTabInSticky: (cb: () => void) => () => void;
+  onAttachNoteInSticky: (cb: (note: { noteId?: number; title: string; body: string; keepAsNewTab?: boolean }) => void) => () => void;
   writeClipboardText: (text: string) => Promise<void>;
+  openExternalUrl: (url: string) => Promise<void>;
   reportRendererError: (scope: string, message: string, stack?: string) => void;
 
   // ── Auto-update ──
@@ -94,10 +127,6 @@ export interface EchoApi {
   onModelDownloadProgress: (
     cb: (state: string, progress?: ModelDownloadProgress, error?: string) => void
   ) => () => void;
-  hasGroqApiKey: () => Promise<boolean>;
-  isSecureStorageAvailable: () => Promise<boolean>;
-  setGroqApiKey: (key: string) => Promise<Settings>;
-  clearGroqApiKey: () => Promise<Settings>;
 
   // ── Auth (Supabase) ──
   authConfigStatus: () => Promise<{ configured: boolean }>;
@@ -113,18 +142,49 @@ export interface EchoApi {
   authGoogleSignIn: () => Promise<{ error?: string }>;
   authDeleteAccount: () => Promise<{ error?: string }>;
   authUpdateDisplayName: (name: string) => Promise<{ error?: string }>;
+  authUpdateProfilePicture: (profilePictureDataUrl: string | null) => Promise<{ error?: string }>;
   onAuthState: (cb: (session: AuthSession | null) => void) => () => void;
 
   // ── Cloud sync ──
   syncGetStatus: () => Promise<SyncStatusPayload>;
   syncForce: () => Promise<void>;
   onSyncStatus: (cb: (payload: SyncStatusPayload) => void) => () => void;
+
+  // ── Billing / entitlements ──
+  billingConfigStatus: () => Promise<{ configured: boolean }>;
+  entitlementsGet: () => Promise<EntitlementsPayload>;
+  entitlementsRefresh: () => Promise<EntitlementsPayload>;
+  billingStartCheckout: (
+    plan: 'pro_monthly' | 'pro_yearly'
+  ) => Promise<{ ok: true } | { ok: false; code: string; error: string }>;
+  billingOpenPortal: () => Promise<
+    { ok: true } | { ok: false; code: string; error: string }
+  >;
+  onEntitlementsChanged: (cb: (ent: EntitlementsPayload) => void) => () => void;
+  onBillingDeepLink: (cb: (url: string) => void) => () => void;
+}
+
+export interface EntitlementsPayload {
+  tier: 'anonymous' | 'free' | 'pro';
+  status: string;
+  plan: 'pro_monthly' | 'pro_yearly' | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  trialEnd: string | null;
+  fairUseExceeded: boolean;
+  fairUseRemainingSeconds: number;
+  fairUseUsedSeconds: number;
+  fairUseCapSeconds: number;
+  fetchedAt: number;
+  loading: boolean;
+  error: string | null;
 }
 
 export interface AuthSession {
   userId: string;
   email: string;
   displayName: string | null;
+  profilePictureDataUrl: string | null;
   expiresAt: number | null;
 }
 

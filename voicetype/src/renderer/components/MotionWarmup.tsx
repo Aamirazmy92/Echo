@@ -40,7 +40,9 @@ export default function MotionWarmup() {
     // animate back out, then unmount. Total wall-clock ≈ 350 ms,
     // plenty of time for the user to focus the window.
     const t1 = window.setTimeout(() => setPhase('exit'), 200);
-    const t2 = window.setTimeout(() => setPhase('done'), 400);
+    // Animate out with exit spring, then unmount after settle (springs
+    // are not fixed-duration — allow extra time vs the old tween).
+    const t2 = window.setTimeout(() => setPhase('done'), 520);
     return () => {
       window.clearTimeout(t1);
       window.clearTimeout(t2);

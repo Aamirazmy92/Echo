@@ -2,13 +2,15 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import AuthGate from './auth/AuthGate';
+import StickyNoteWindow from './components/StickyNoteWindow';
+import ToastHost from './components/toast/ToastHost';
 import './index.css';
 
 /**
  * Top-level error boundary.
  *
  * Why we replaced the old "red text on black" panel:
- *   1. Any uncaught render-time exception in Dashboard/Insights/Settings
+ *   1. Any uncaught render-time exception in Dashboard/Settings
  *      used to white-screen the window with no recovery path.
  *   2. The crash details never reached the main-process log, so a friend
  *      reporting "the app went red" gave us nothing to debug from.
@@ -70,7 +72,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
             padding: 24,
             background: 'hsl(220, 20%, 94%)',
             color: 'hsl(220, 14%, 14%)',
-            fontFamily: '"Figtree", "Segoe UI", sans-serif',
+            fontFamily: 'var(--font-body, "Figtree", "Segoe UI", sans-serif)',
           }}
         >
           <div
@@ -139,11 +141,30 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 
 const container = document.getElementById('root') as HTMLElement;
 const root = createRoot(container);
+const isStickyNoteWindow = new URLSearchParams(window.location.search).has('stickyNote');
+
+const splashEl = document.getElementById('splash');
+if (isStickyNoteWindow) {
+  // Sticky-note windows must never show the Echo splash — remove it instantly.
+  if (splashEl) splashEl.remove();
+} else if (splashEl) {
+  // Main window: the splash starts hidden in index.html so sticky notes never
+  // flash it. We make it visible here so the branded loading screen appears.
+  splashEl.style.display = '';
+}
+
 root.render(
   <ErrorBoundary>
-    <AuthGate>
-      <App />
-    </AuthGate>
+    {isStickyNoteWindow ? (
+      <>
+        <StickyNoteWindow />
+        <ToastHost />
+      </>
+    ) : (
+      <AuthGate>
+        <App />
+      </AuthGate>
+    )}
   </ErrorBoundary>
 );
 

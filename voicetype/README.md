@@ -34,7 +34,7 @@ Useful scripts:
 | `npm run start:forge` | Plain Electron Forge dev (no auto-restart). |
 | `npm run typecheck` | TypeScript check, no emit. |
 | `npm run lint` | ESLint over `src/`. |
-| `npm test` | Vitest (currently no tests). |
+| `npm test` | Run the Vitest unit suite. |
 | `npm run package` | Produce an unpacked Forge package for local inspection. |
 | `npm run make` | Produce an NSIS installer plus `latest.yml` in `dist/`. |
 | `npm run publish` | Build + upload NSIS update assets to GitHub Releases. |
@@ -114,8 +114,10 @@ src/
   main/        Electron main process. Hotkey watcher, transcription
                pipeline (cloud + local whisper.cpp), text injection,
                history DB, encrypted settings store, tray, overlay.
-  renderer/    React 18 app. Tabs: Dashboard / Insights / History /
+  renderer/    React 18 app. Tabs: Dashboard / Notepad / History /
                Snippets / Style. Settings opens in a portal-modal.
+               Notepad notes open in detachable sticky-note windows
+               whose tabs can be torn out and dragged between windows.
   shared/      Types, hotkey/language utilities — used by both sides.
 
 scripts/

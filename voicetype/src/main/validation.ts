@@ -1,4 +1,4 @@
-import type { DictionaryItemInput, Settings, SnippetInput, SpeechMetrics } from '../shared/types';
+import type { DictionaryItemInput, NoteInput, Settings, SnippetInput, SpeechMetrics } from '../shared/types';
 import {
   DEFAULT_CANCEL_HOTKEY,
   DEFAULT_PUSH_TO_TALK_HOTKEY,
@@ -23,6 +23,8 @@ const MAX_SNIPPET_EXPANSION_LENGTH = 20_000;
 const MAX_CATEGORY_LENGTH = 80;
 const MAX_DICTIONARY_PHRASE_LENGTH = 160;
 const MAX_DICTIONARY_MISSPELLING_LENGTH = 160;
+const MAX_NOTE_TITLE_LENGTH = 200;
+const MAX_NOTE_BODY_LENGTH = 50_000;
 
 type PlainObject = Record<string, unknown>;
 
@@ -374,5 +376,17 @@ export function sanitizeSnippetInputPayload(value: unknown): SnippetInput {
     expansion: sanitizeTrimmedString(value.expansion, 'expansion', MAX_SNIPPET_EXPANSION_LENGTH),
     category: sanitizeOptionalTrimmedString(value.category, 'category', MAX_CATEGORY_LENGTH, { collapseWhitespace: true }) ?? '',
     shared: sanitizeBoolean(value.shared, 'shared'),
+  };
+}
+
+export function sanitizeNoteInputPayload(value: unknown): NoteInput {
+  if (!isPlainObject(value)) {
+    throw new Error('Invalid note.');
+  }
+
+  return {
+    ...(value.id !== undefined ? { id: sanitizeEntryId(value.id) } : {}),
+    title: sanitizeOptionalTrimmedString(value.title, 'title', MAX_NOTE_TITLE_LENGTH) ?? '',
+    body: sanitizeTrimmedString(value.body, 'body', MAX_NOTE_BODY_LENGTH, { allowEmpty: true }),
   };
 }

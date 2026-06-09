@@ -2,18 +2,19 @@ import Database from 'better-sqlite3';
 import { app } from 'electron';
 import path from 'path';
 import crypto from 'crypto';
-import { DictionaryItem, DictionaryItemInput, DictationEntry, Snippet, SnippetInput } from '../shared/types';
+import { DictionaryItem, DictionaryItemInput, DictationEntry, Note, NoteInput, Snippet, SnippetInput } from '../shared/types';
 import { escapeCsvField } from './csv';
 
 let db: Database.Database;
 
 let snippetsCache: Snippet[] | null = null;
 let dictionaryCache: DictionaryItem[] | null = null;
+let notesCache: Note[] | null = null;
 
 // Tables that participate in cloud sync. Each gets cloud_id (UUID),
 // updated_at, and deleted_at columns added by the migration block in
 // initHistory(). The sync engine reads/writes to these via getDb().
-const SYNCABLE_TABLES = ['dictations', 'snippets', 'dictionary_items'] as const;
+const SYNCABLE_TABLES = ['dictations', 'snippets', 'dictionary_items', 'notes'] as const;
 
 type DictationRow = {
   id: number;
@@ -86,12 +87,14 @@ export function clearLocalSyncedData(): void {
     db.prepare('DELETE FROM dictations').run();
     db.prepare('DELETE FROM snippets').run();
     db.prepare('DELETE FROM dictionary_items').run();
+    db.prepare('DELETE FROM notes').run();
     db.prepare('DELETE FROM sync_queue').run();
     db.prepare('DELETE FROM sync_meta').run();
   });
   tx();
   snippetsCache = null;
   dictionaryCache = null;
+  notesCache = null;
 }
 
 export function initHistory() {
@@ -125,6 +128,13 @@ export function initHistory() {
       misspelling TEXT,
       correct_misspelling INTEGER NOT NULL DEFAULT 0,
       shared INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT ''
     );
 
@@ -183,11 +193,17 @@ export function initHistory() {
     db.exec(`UPDATE dictionary_items SET created_at = CURRENT_TIMESTAMP WHERE created_at = ''`);
   }
 
+  const noteColumns = db.pragma('table_info(notes)') as { name: string }[];
+  if (!noteColumns.some(c => c.name === 'pinned')) {
+    db.exec(`ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
+  }
+
   // Create indexes for frequently queried columns
   db.exec(`CREATE INDEX IF NOT EXISTS idx_dictations_created_at ON dictations(created_at)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_dictations_app_name ON dictations(app_name)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_snippets_category ON snippets(category)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_dictionary_items_phrase ON dictionary_items(phrase)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at)`);
 
   // ── v1.1.0 cloud sync migration ────────────────────────────────────
   // Add cloud_id (UUID), updated_at, deleted_at to every syncable table.
@@ -562,6 +578,125 @@ export function deleteSnippet(id: number): void {
   const row = db.prepare('SELECT cloud_id FROM snippets WHERE id = ?').get(id) as { cloud_id?: string } | undefined;
   db.prepare('DELETE FROM snippets WHERE id = ?').run(id);
   if (row?.cloud_id) enqueueSync('snippets', row.cloud_id, 'delete', null);
+}
+
+// ── Notes ─────────────────────────────────────────────────────────────
+
+export function getNotes(): Note[] {
+  if (notesCache) return notesCache;
+
+  const rows = db.prepare(`
+    SELECT id, title, body, created_at, updated_at, pinned
+    FROM notes
+    WHERE deleted_at IS NULL
+    ORDER BY pinned DESC, updated_at DESC, created_at DESC
+  `).all() as Array<{
+    id: number;
+    title: string;
+    body: string;
+    created_at: string;
+    updated_at: string;
+    pinned: number;
+  }>;
+
+  notesCache = rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at || row.created_at,
+    pinned: Boolean(row.pinned),
+  }));
+  return notesCache;
+}
+
+export function saveNote(note: NoteInput): Note {
+  notesCache = null;
+  const nowIso = new Date().toISOString();
+  const trimmedTitle = note.title.trim();
+  const trimmedBody = note.body.trim();
+
+  if (note.id) {
+    const existing = db.prepare('SELECT cloud_id, created_at FROM notes WHERE id = ?').get(note.id) as
+      | { cloud_id?: string; created_at?: string }
+      | undefined;
+    const cloudId = existing?.cloud_id || crypto.randomUUID();
+    const createdAt = existing?.created_at || nowIso;
+    db.prepare(`
+      UPDATE notes
+      SET title = ?, body = ?, updated_at = ?, cloud_id = COALESCE(cloud_id, ?)
+      WHERE id = ?
+    `).run(trimmedTitle, trimmedBody, nowIso, cloudId, note.id);
+    const pinned = Boolean(db.prepare('SELECT pinned FROM notes WHERE id = ?').pluck().get(note.id) as number | undefined);
+    enqueueSync('notes', cloudId, 'upsert', {
+      id: cloudId,
+      title: trimmedTitle,
+      body: trimmedBody,
+      client_created_at: createdAt,
+      updated_at: nowIso,
+    });
+    return {
+      id: note.id,
+      title: trimmedTitle,
+      body: trimmedBody,
+      createdAt,
+      updatedAt: nowIso,
+      pinned,
+    };
+  }
+
+  const cloudId = crypto.randomUUID();
+  const info = db.prepare(`
+    INSERT INTO notes (title, body, created_at, updated_at, cloud_id, pinned)
+    VALUES (?, ?, ?, ?, ?, 0)
+  `).run(trimmedTitle, trimmedBody, nowIso, nowIso, cloudId);
+  enqueueSync('notes', cloudId, 'upsert', {
+    id: cloudId,
+    title: trimmedTitle,
+    body: trimmedBody,
+    client_created_at: nowIso,
+    updated_at: nowIso,
+  });
+  return {
+    id: info.lastInsertRowid as number,
+    title: trimmedTitle,
+    body: trimmedBody,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    pinned: false,
+  };
+}
+
+export function toggleNotePin(id: number, pinned: boolean): Note {
+  notesCache = null;
+  const nowIso = new Date().toISOString();
+  db.prepare(`UPDATE notes SET pinned = ?, updated_at = ? WHERE id = ?`).run(pinned ? 1 : 0, nowIso, id);
+  const row = db.prepare(`SELECT cloud_id FROM notes WHERE id = ?`).get(id) as { cloud_id?: string } | undefined;
+  if (row?.cloud_id) {
+    enqueueSync('notes', row.cloud_id, 'upsert', {
+      id: row.cloud_id,
+      pinned: pinned ? 1 : 0,
+      updated_at: nowIso,
+    });
+  }
+  const updated = db.prepare(`SELECT id, title, body, created_at, updated_at, pinned FROM notes WHERE id = ?`).get(id) as {
+    id: number; title: string; body: string; created_at: string; updated_at: string; pinned: number;
+  };
+  return {
+    id: updated.id,
+    title: updated.title,
+    body: updated.body,
+    createdAt: updated.created_at,
+    updatedAt: updated.updated_at,
+    pinned: Boolean(updated.pinned),
+  };
+}
+
+export function deleteNote(id: number): void {
+  notesCache = null;
+  const row = db.prepare('SELECT cloud_id FROM notes WHERE id = ?').get(id) as { cloud_id?: string } | undefined;
+  db.prepare('DELETE FROM notes WHERE id = ?').run(id);
+  if (row?.cloud_id) enqueueSync('notes', row.cloud_id, 'delete', null);
 }
 
 export function getDictionaryItems(): DictionaryItem[] {

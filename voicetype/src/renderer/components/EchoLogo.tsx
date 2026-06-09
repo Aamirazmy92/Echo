@@ -22,9 +22,9 @@ export default function EchoLogo({ className, title }: EchoLogoProps) {
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#4338CA" />
-          <stop offset="55%" stopColor="#5448E2" />
-          <stop offset="100%" stopColor="#6366F1" />
+          <stop offset="0%" stopColor="#B25538" />
+          <stop offset="55%" stopColor="#C96442" />
+          <stop offset="100%" stopColor="#D97757" />
         </linearGradient>
       </defs>
       <rect x="20" y="20" width="216" height="216" rx="52" fill={`url(#${gradientId})`} />

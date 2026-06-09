@@ -28,7 +28,26 @@ type Level = 'info' | 'warn' | 'error';
 const NETWORK_ERROR_MESSAGE = 'Network request failed';
 
 function errorDetails(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
+  if (!(error instanceof Error)) {
+    if (error && typeof error === 'object') {
+      const detail = error as Record<string, unknown>;
+      const parts = [
+        typeof detail.code === 'string' ? `code=${detail.code}` : null,
+        typeof detail.message === 'string' ? detail.message : null,
+        typeof detail.details === 'string' ? `details=${detail.details}` : null,
+        typeof detail.hint === 'string' ? `hint=${detail.hint}` : null,
+      ].filter(Boolean);
+      if (parts.length > 0) return parts.join(' | ');
+
+      try {
+        return JSON.stringify(detail);
+      } catch {
+        return Object.prototype.toString.call(error);
+      }
+    }
+
+    return String(error);
+  }
 
   const cause = (error as Error & { cause?: unknown }).cause as { code?: string; message?: string } | undefined;
   const combined = `${error.name} ${error.message} ${cause?.code ?? ''} ${cause?.message ?? ''}`;

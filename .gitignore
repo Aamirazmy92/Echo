@@ -8,14 +8,19 @@
 .vscode/
 .idea/
 
-# Claude Code / OpenClaude tooling state. The profile JSON in particular
-# can contain API keys — never commit it.
+# Claude Code tooling state.
 .claude/
+
+# OpenClaude / agent tooling profile — may contain API keys. Never commit.
 .openclaude-profile.json
+**/.openclaude-profile.json
 
 # OS metadata
 Thumbs.db
 .DS_Store
+
+# Design handoff bundles dropped from claude.ai/design
+.design-ref/
 
 # Stray logs at the workspace root
 *.log

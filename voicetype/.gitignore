@@ -12,3 +12,9 @@ app.log
 # `.env.example` documents what's needed.
 .env
 .env.local
+
+# Supabase CLI local state (project ref, pooler URL, version pins).
+supabase/.temp/
+
+# Agent tooling profile — may contain API keys. Never commit.
+.openclaude-profile.json

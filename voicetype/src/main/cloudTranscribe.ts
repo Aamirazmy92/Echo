@@ -1,7 +1,6 @@
 import { resolveCloudLanguage } from '../shared/languages';
+import { proxyTranscribe } from './cloud';
 
-const CLOUD_TRANSCRIPTION_MODEL = 'whisper-large-v3';
-const GROQ_TRANSCRIPTIONS_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const CLOUD_TIMEOUT_MS = 15_000;
 
 function encodeWav(samples: Float32Array, sampleRate: number): Buffer {
@@ -34,62 +33,48 @@ function encodeWav(samples: Float32Array, sampleRate: number): Buffer {
   return buffer;
 }
 
-export async function transcribeWithCloud(
-  audioBuffer: ArrayBuffer,
-  apiKey: string,
-  language: string
-): Promise<{ text: string; detectedLanguage?: string }> {
-  let waveform: Float32Array;
+function audioBufferToWaveform(audioBuffer: ArrayBuffer): Float32Array | null {
   if (audioBuffer instanceof ArrayBuffer) {
-    waveform = new Float32Array(audioBuffer);
-  } else if (ArrayBuffer.isView(audioBuffer)) {
+    return new Float32Array(audioBuffer);
+  }
+  if (ArrayBuffer.isView(audioBuffer)) {
     const view = audioBuffer as unknown as Uint8Array;
     const raw = view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
-    waveform = new Float32Array(raw);
-  } else {
-    return { text: '' };
+    return new Float32Array(raw);
   }
+  return null;
+}
 
-  if (!waveform.length) return { text: '' };
+/**
+ * Cloud transcription via the Echo Pro proxy (Supabase Edge Function).
+ * No Groq key needed on the client — the server holds it. Used when the
+ * signed-in user has an active Pro entitlement.
+ */
+export async function transcribeWithCloudProxy(
+  audioBuffer: ArrayBuffer,
+  language: string,
+): Promise<{ text: string; detectedLanguage?: string }> {
+  const waveform = audioBufferToWaveform(audioBuffer);
+  if (!waveform || !waveform.length) return { text: '' };
 
   const wavBuffer = encodeWav(waveform, 16000);
   const langCode = resolveCloudLanguage(language);
+  const durationMs = Math.round((waveform.length / 16000) * 1000);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CLOUD_TIMEOUT_MS);
-  const wavArrayBuffer = wavBuffer.buffer.slice(wavBuffer.byteOffset, wavBuffer.byteOffset + wavBuffer.byteLength) as ArrayBuffer;
-  const form = new FormData();
-  form.append('file', new Blob([wavArrayBuffer], { type: 'audio/wav' }), 'audio.wav');
-  form.append('model', CLOUD_TRANSCRIPTION_MODEL);
-  form.append('response_format', 'verbose_json');
-  if (langCode !== 'auto') form.append('language', langCode);
-  form.append('prompt', 'Transcribe the speech exactly as spoken. Keep the original language and script. Do not translate.');
-  form.append('temperature', '0');
 
-  let transcription: { text?: unknown; language?: unknown };
   try {
-    const response = await fetch(GROQ_TRANSCRIPTIONS_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey.replace(/\s+/g, '')}`,
-      },
-      body: form,
+    const result = await proxyTranscribe({
+      wavBuffer,
+      language: langCode,
+      durationMs,
       signal: controller.signal,
     });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      throw new Error(errorText || `Groq transcription failed with HTTP ${response.status}`);
-    }
-
-    transcription = await response.json();
+    return {
+      text: String(result.text ?? '').replace(/\s+/g, ' ').trim(),
+      detectedLanguage: typeof result.language === 'string' ? result.language.trim() : undefined,
+    };
   } finally {
     clearTimeout(timeout);
   }
-
-  return {
-    text: String(transcription.text ?? '').replace(/\s+/g, ' ').trim(),
-    detectedLanguage: typeof transcription.language === 'string'
-      ? transcription.language.trim()
-      : undefined,
-  };
 }

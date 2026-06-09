@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import { Minus, Square, X } from 'lucide-react';
-import echoLogoUrl from '../assets/echo-logo.png';
 
 /*
  * Shared chrome for every auth screen — centred card on a soft
@@ -35,39 +34,25 @@ export function AuthShell({
   footer?: ReactNode;
 }) {
   return (
-    <div
-      className="relative flex h-screen w-screen items-center justify-center px-6"
-      style={{
-        background:
-          'radial-gradient(circle at 30% 0%, hsl(220, 30%, 97%), hsl(220, 18%, 92%) 60%)',
-      }}
-    >
+    <div className="relative flex h-screen w-screen items-center justify-center bg-[hsl(var(--app-bg))] px-6">
       <TitleBar />
       <div className="w-full max-w-[400px]">
         <div className="mb-6 text-center">
-          <div className="mb-3 flex justify-center">
-            <img
-              src={echoLogoUrl}
-              alt="Echo"
-              draggable={false}
-              className="h-14 w-14 select-none object-contain"
-            />
-          </div>
-          <div className="mb-1 text-2xl font-semibold tracking-tight text-[hsl(220,14%,14%)]">
+          <div className="mb-1 text-3xl font-bold text-foreground">
             Echo
           </div>
-          <div className="text-sm text-[hsl(220,10%,42%)]">{subtitle}</div>
+          <div className="text-sm text-muted-foreground">{subtitle}</div>
         </div>
 
         <div
-          className="rounded-2xl border border-black/5 bg-white p-7 shadow-[0_4px_24px_rgba(0,0,0,0.06)]"
+          className="rounded-[24px] border border-border bg-popover p-7 shadow-[0_18px_60px_-44px_rgba(15,23,42,0.42)]"
         >
-          <h1 className="mb-5 text-base font-semibold text-[hsl(220,14%,14%)]">{title}</h1>
+          <h1 className="mb-5 text-base font-semibold text-foreground">{title}</h1>
           {children}
         </div>
 
         {footer ? (
-          <div className="mt-5 text-center text-xs text-[hsl(220,10%,46%)]">{footer}</div>
+          <div className="mt-5 text-center text-xs text-muted-foreground">{footer}</div>
         ) : null}
       </div>
     </div>
@@ -75,16 +60,16 @@ export function AuthShell({
 }
 
 export const inputClasses =
-  'w-full rounded-lg border border-[hsl(220,14%,86%)] bg-white px-3 py-2 text-sm text-[hsl(220,14%,14%)] outline-none placeholder:text-[hsl(220,10%,60%)] focus:border-black focus:ring-2 focus:ring-black/10 disabled:opacity-60';
+  'w-full rounded-xl border border-border bg-popover px-3 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground disabled:opacity-60';
 
 export const primaryButtonClasses =
-  'flex h-10 w-full items-center justify-center rounded-lg bg-[hsl(220,14%,14%)] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[hsl(220,14%,8%)] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60';
+  'flex h-10 w-full items-center justify-center rounded-xl bg-foreground px-4 text-sm font-bold text-background shadow-sm transition hover:bg-foreground/90 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60';
 
 export const secondaryButtonClasses =
-  'flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[hsl(220,14%,86%)] bg-white px-4 text-sm font-medium text-[hsl(220,14%,14%)] transition hover:bg-[hsl(220,20%,97%)] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60';
+  'flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-border bg-popover px-4 text-sm font-semibold text-foreground transition hover:bg-muted active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60';
 
 export const linkButtonClasses =
-  'text-[hsl(220,14%,14%)] underline-offset-4 hover:underline focus:outline-none focus:underline';
+  'text-foreground underline-offset-4 hover:underline focus:outline-none focus:underline';
 
 /**
  * Frameless-window titlebar for the auth screens.
@@ -101,7 +86,7 @@ function TitleBar() {
           type="button"
           onClick={() => window.api.windowMinimize()}
           aria-label="Minimize window"
-          className="flex h-10 w-11 items-center justify-center rounded-md text-[hsl(220,14%,40%)] transition-colors hover:bg-black/5 hover:text-[hsl(220,14%,14%)]"
+          className="flex h-10 w-11 items-center justify-center rounded-lg text-foreground/58 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
         >
           <Minus size={17} />
         </button>
@@ -109,7 +94,7 @@ function TitleBar() {
           type="button"
           onClick={() => window.api.windowToggleMaximize()}
           aria-label="Maximize window"
-          className="flex h-10 w-11 items-center justify-center rounded-md text-[hsl(220,14%,40%)] transition-colors hover:bg-black/5 hover:text-[hsl(220,14%,14%)]"
+          className="flex h-10 w-11 items-center justify-center rounded-lg text-foreground/58 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
         >
           <Square size={15} />
         </button>
@@ -117,7 +102,7 @@ function TitleBar() {
           type="button"
           onClick={() => window.api.windowClose()}
           aria-label="Close window"
-          className="flex h-10 w-11 items-center justify-center rounded-md text-[hsl(220,14%,40%)] transition-colors hover:bg-red-500/10 hover:text-red-600"
+          className="flex h-10 w-11 items-center justify-center rounded-lg text-foreground/58 transition-colors hover:bg-red-500/10 hover:text-red-600"
         >
           <X size={17} />
         </button>

@@ -33,6 +33,8 @@ const SUPABASE_REDIRECT_URL =
 
 let supabase: SupabaseClient | null = null;
 let currentSession: Session | null = null;
+let intentionalSignOut = false;
+let ensureSessionPromise: Promise<Session | null> | null = null;
 const sessionListeners = new Set<(session: Session | null) => void>();
 const NETWORK_AUTH_ERROR = 'Network error. Check your internet connection and try again.';
 
@@ -175,6 +177,51 @@ export function getCurrentSession(): Session | null {
   return currentSession;
 }
 
+export async function ensureCurrentSession(): Promise<Session | null> {
+  if (currentSession) return currentSession;
+  if (!supabase) return null;
+  if (ensureSessionPromise) return ensureSessionPromise;
+
+  ensureSessionPromise = (async () => {
+    const stored = restoreSession();
+    if (!stored?.refresh_token) {
+      return null;
+    }
+
+    try {
+      const { data, error } = await supabase!.auth.setSession({
+        access_token: stored.access_token,
+        refresh_token: stored.refresh_token,
+      });
+      if (error) {
+        logWarn('auth', 'could not rehydrate session', error);
+        persistSession(null);
+        return null;
+      }
+      if (data.session) {
+        currentSession = data.session;
+        persistSession(data.session);
+        notifyListeners(data.session);
+        logInfo('auth', 'rehydrated persisted session');
+        return data.session;
+      }
+    } catch (err) {
+      logWarn('auth', 'could not reach Supabase while rehydrating session', err);
+      if (isNetworkError(err)) {
+        currentSession = stored;
+        notifyListeners(stored);
+        return stored;
+      }
+    }
+
+    return null;
+  })().finally(() => {
+    ensureSessionPromise = null;
+  });
+
+  return ensureSessionPromise;
+}
+
 export function getCurrentUserId(): string | null {
   return currentSession?.user?.id ?? null;
 }
@@ -241,9 +288,19 @@ export async function initAuth(): Promise<void> {
     }
   }
 
-  supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
+  supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
     // No info-log here — every token refresh fires this and the Account
     // panel already shows the live state. Errors/warnings still log.
+    if (!session && currentSession && !intentionalSignOut) {
+      // We restore the session ourselves from auth-session.json and have
+      // Supabase internal persistence disabled. In that setup the SDK can emit
+      // a null event after `setSession()` succeeds or after a transient refresh
+      // problem. Do not wipe a known-good restored session unless the user
+      // explicitly signs out or deletes the account.
+      logInfo('auth', `ignored null ${event} while a restored session is active`);
+      return;
+    }
+    intentionalSignOut = false;
     currentSession = session;
     persistSession(session);
     notifyListeners(session);
@@ -290,8 +347,12 @@ export async function signUpWithPassword(
 export async function signOut(): Promise<{ error?: string }> {
   if (!supabase) return {};
   try {
+    intentionalSignOut = true;
     const { error } = await supabase.auth.signOut();
-    if (error) return { error: authErrorMessage(error) };
+    if (error) {
+      intentionalSignOut = false;
+      return { error: authErrorMessage(error) };
+    }
     currentSession = null;
     persistSession(null);
     return {};
@@ -362,6 +423,44 @@ export async function updateDisplayName(name: string): Promise<{ error?: string 
   return {};
 }
 
+export async function updateProfilePicture(profilePictureDataUrl: string | null): Promise<{ error?: string }> {
+  if (!supabase) return { error: 'Cloud sync not configured.' };
+  if (!currentSession) return { error: 'Not signed in.' };
+
+  if (
+    profilePictureDataUrl !== null &&
+    !/^data:image\/(?:jpeg|jpg|png|webp);base64,/i.test(profilePictureDataUrl)
+  ) {
+    return { error: 'Invalid profile picture.' };
+  }
+
+  if (profilePictureDataUrl && profilePictureDataUrl.length > 256 * 1024) {
+    return { error: 'Profile picture is too large.' };
+  }
+
+  try {
+    const { data, error } = await supabase.auth.updateUser({
+      data: { avatar_data_url: profilePictureDataUrl },
+    });
+
+    if (error) {
+      logError('auth', 'updateUser avatar_data_url failed', error);
+      return { error: authErrorMessage(error) };
+    }
+
+    if (data?.user) {
+      currentSession = { ...currentSession, user: data.user } as Session;
+      persistSession(currentSession);
+      notifyListeners(currentSession);
+    }
+
+    return {};
+  } catch (err) {
+    logWarn('auth', 'update profile picture request failed', err);
+    return { error: authErrorMessage(err) };
+  }
+}
+
 /**
  * Permanently delete the signed-in user's account and all their data.
  *
@@ -390,6 +489,7 @@ export async function deleteAccount(): Promise<{ error?: string }> {
   // Best-effort sign-out. The auth.users row is gone so the next API
   // call would fail anyway, but signing out cleanly tears down the
   // local session file + triggers the local-data wipe.
+  intentionalSignOut = true;
   await supabase.auth.signOut().catch(() => undefined);
   currentSession = null;
   persistSession(null);
@@ -513,6 +613,7 @@ export interface SerialisedSession {
   userId: string;
   email: string;
   displayName: string | null;
+  profilePictureDataUrl: string | null;
   expiresAt: number | null;
 }
 
@@ -524,6 +625,9 @@ export function serialiseSession(): SerialisedSession | null {
     displayName:
       (currentSession.user.user_metadata?.display_name as string | undefined) ??
       currentSession.user.email?.split('@')[0] ??
+      null,
+    profilePictureDataUrl:
+      (currentSession.user.user_metadata?.avatar_data_url as string | undefined) ??
       null,
     expiresAt: currentSession.expires_at ?? null,
   };

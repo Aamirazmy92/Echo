@@ -31,8 +31,8 @@ import { logError, logWarn } from '../logger';
  */
 
 type TableMap = {
-  cloudTable: 'history' | 'snippets' | 'dictionary' | 'custom_styles';
-  localTable: 'dictations' | 'snippets' | 'dictionary_items' | 'custom_styles';
+  cloudTable: 'history' | 'snippets' | 'dictionary' | 'notes' | 'custom_styles';
+  localTable: 'dictations' | 'snippets' | 'dictionary_items' | 'notes' | 'custom_styles';
   /** Map a cloud row to the local-column shape used for upsert. */
   toLocal: (row: Record<string, unknown>) => SyncLocalRow;
 };
@@ -75,6 +75,19 @@ const TABLES: Record<TableMap['cloudTable'], TableMap> = {
       deleted_at: r.deleted_at,
     }),
   },
+  notes: {
+    cloudTable: 'notes',
+    localTable: 'notes',
+    toLocal: (r) => ({
+      cloud_id: r.id,
+      title: r.title,
+      body: r.body,
+      pinned: r.pinned ? 1 : 0,
+      created_at: r.client_created_at,
+      updated_at: r.updated_at,
+      deleted_at: r.deleted_at,
+    }),
+  },
   dictionary: {
     cloudTable: 'dictionary',
     localTable: 'dictionary_items',
@@ -107,6 +120,8 @@ let pullInFlight = false;
 let lastPushError: string | null = null;
 let lastPullError: string | null = null;
 let pendingLocalDataClear = false;
+const disabledPushTables = new Set<string>();
+const disabledPullTables = new Set<string>();
 
 export type SyncStatus = 'idle' | 'syncing' | 'offline' | 'error' | 'signed-out';
 
@@ -168,6 +183,26 @@ function broadcastLocalDataCleared(): void {
   }
 }
 
+function isMissingCloudRelationError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const detail = error as { code?: unknown; message?: unknown; details?: unknown };
+  const code = typeof detail.code === 'string' ? detail.code : '';
+  const message = `${typeof detail.message === 'string' ? detail.message : ''} ${typeof detail.details === 'string' ? detail.details : ''}`;
+  return code === '42P01' || code === 'PGRST205' || /relation .* does not exist|could not find the table/i.test(message);
+}
+
+function disableMissingPushTable(table: string, error: unknown): void {
+  if (disabledPushTables.has(table)) return;
+  disabledPushTables.add(table);
+  logWarn('sync', `cloud table "${table}" is missing; ${table} sync is paused for this session`, error);
+}
+
+function disableMissingPullTable(table: string, error: unknown): void {
+  if (disabledPullTables.has(table)) return;
+  disabledPullTables.add(table);
+  logWarn('sync', `cloud table "${table}" is missing; ${table} pull is paused for this session`, error);
+}
+
 function applyPendingLocalDataClearIfReady(): void {
   if (!pendingLocalDataClear || !isHistoryReady()) return;
   clearLocalSyncedData();
@@ -206,6 +241,7 @@ async function drainQueue(): Promise<void> {
       const deletesByTable = new Map<string, Array<{ queueId: number; cloudId: string }>>();
 
       for (const row of batch) {
+        if (disabledPushTables.has(row.table_name)) continue;
         if (row.op === 'upsert' && row.payload) {
           const list = upsertsByTable.get(row.table_name) ?? [];
           const parsed = JSON.parse(row.payload) as Record<string, unknown>;
@@ -221,11 +257,19 @@ async function drainQueue(): Promise<void> {
       const completedQueueIds: number[] = [];
       const erroredQueueIds: number[] = [];
 
+      if (upsertsByTable.size === 0 && deletesByTable.size === 0) {
+        break;
+      }
+
       for (const [table, items] of upsertsByTable) {
         const { error } = await supabase
           .from(table)
           .upsert(items.map((i) => i.payload), { onConflict: 'id' });
         if (error) {
+          if (isMissingCloudRelationError(error)) {
+            disableMissingPushTable(table, error);
+            continue;
+          }
           lastPushError = `upsert ${table}: ${error.message}`;
           erroredQueueIds.push(...items.map((i) => i.queueId));
           logWarn('sync', `upsert into ${table} failed`, error);
@@ -246,6 +290,10 @@ async function drainQueue(): Promise<void> {
             items.map((i) => i.cloudId)
           );
         if (error) {
+          if (isMissingCloudRelationError(error)) {
+            disableMissingPushTable(table, error);
+            continue;
+          }
           lastPushError = `delete ${table}: ${error.message}`;
           erroredQueueIds.push(...items.map((i) => i.queueId));
           logWarn('sync', `tombstone in ${table} failed`, error);
@@ -301,6 +349,7 @@ async function pullTable(map: TableMap): Promise<void> {
   const supabase = getSupabase();
   const userId = getCurrentUserId();
   if (!supabase || !userId) return;
+  if (disabledPullTables.has(map.cloudTable)) return;
 
   const since = getLastPulledAt(map.cloudTable);
   let page = 0;
@@ -320,6 +369,10 @@ async function pullTable(map: TableMap): Promise<void> {
     }
     const { data, error } = await query;
     if (error) {
+      if (isMissingCloudRelationError(error)) {
+        disableMissingPullTable(map.cloudTable, error);
+        return;
+      }
       lastPullError = `pull ${map.cloudTable}: ${error.message}`;
       logWarn('sync', `pull from ${map.cloudTable} failed`, error);
       return;
@@ -419,6 +472,19 @@ function applyInsert(table: string, row: SyncLocalRow): void {
       cloud_id: row.cloud_id,
       updated_at: row.updated_at ?? new Date().toISOString(),
     });
+  } else if (table === 'notes') {
+    db.prepare(
+      `INSERT OR REPLACE INTO notes (title, body, created_at, updated_at, cloud_id, deleted_at, pinned)
+       VALUES (@title, @body, @created_at, @updated_at, @cloud_id, @deleted_at, @pinned)`
+    ).run({
+      title: row.title ?? '',
+      body: row.body ?? '',
+      created_at: row.created_at ?? new Date().toISOString(),
+      updated_at: row.updated_at ?? new Date().toISOString(),
+      cloud_id: row.cloud_id,
+      deleted_at: row.deleted_at ?? null,
+      pinned: row.pinned ?? 0,
+    });
   }
 }
 
@@ -461,6 +527,17 @@ function applyUpdate(table: string, id: number, row: SyncLocalRow): void {
       row.updated_at,
       id
     );
+  } else if (table === 'notes') {
+    db.prepare(
+      `UPDATE notes SET title=?, body=?, updated_at=?, deleted_at=?, pinned=? WHERE id=?`
+    ).run(
+      row.title ?? '',
+      row.body ?? '',
+      row.updated_at,
+      row.deleted_at ?? null,
+      row.pinned ?? 0,
+      id
+    );
   }
 }
 
@@ -475,6 +552,7 @@ async function pullAll(): Promise<void> {
     await pullTable(TABLES.history);
     await pullTable(TABLES.snippets);
     await pullTable(TABLES.dictionary);
+    await pullTable(TABLES.notes);
     lastSyncedAt = new Date().toISOString();
   } catch (err) {
     lastPullError = (err as Error).message;

@@ -22,6 +22,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main_window: path.resolve(__dirname, 'src/renderer/index.html'),
+        sticky_window: path.resolve(__dirname, 'src/renderer/sticky.html'),
         overlay_window: path.resolve(__dirname, 'src/renderer/overlay/overlay.html'),
       },
     },

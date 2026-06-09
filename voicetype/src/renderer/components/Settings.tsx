@@ -13,6 +13,7 @@ import {
 } from '../../shared/hotkey';
 import {
   Check,
+  CreditCard,
   Download,
   Search,
   Settings as SettingsIcon,
@@ -22,25 +23,23 @@ import {
   RefreshCw,
   X,
   Pencil,
-  Eye,
-  EyeOff,
   Mic,
-  Wifi,
   UserCircle2,
 } from 'lucide-react';
 import AccountView from './Account';
+import { refreshPointerTargetUnderCursor } from '../lib/pointerSync';
+import ModalOverlayRoot from './ModalOverlayRoot';
+import PlansBilling from './PlansBilling';
 import { toast } from './toast/useToast';
-import type { UpdateStatusPayload } from '../api';
+import { useMicTest } from '../lib/useMicTest';
+import type { EntitlementsPayload, UpdateStatusPayload } from '../api';
 import {
-  MODAL_BACKDROP_EXIT,
-  MODAL_BACKDROP_INITIAL,
-  MODAL_BACKDROP_OPEN,
-  MODAL_BACKDROP_TRANSITION,
+  MODAL_OVERLAY_FADE,
   MODAL_PANEL_INITIAL,
   MODAL_PANEL_OPEN,
   MODAL_PANEL_EXIT,
-  MODAL_OPEN_TRANSITION,
-  MODAL_CLOSE_TRANSITION,
+  MODAL_SPRING,
+  MODAL_SPRING_EXIT,
 } from '../lib/modalMotion';
 
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
@@ -122,37 +121,31 @@ function SettingsModalShell({
   }, [open, onClose, closeOnEscape]);
 
   const modalContent = (
-    <AnimatePresence initial={false}>
+    <AnimatePresence initial={false} onExitComplete={refreshPointerTargetUnderCursor}>
       {open ? (
-        <motion.div
+        <ModalOverlayRoot
           key="settings-modal"
-          className="fixed inset-0 flex items-center justify-center"
+          className="fixed inset-0 flex items-center justify-center bg-[hsl(25_18%_12%/0.30)] px-6"
           style={{ zIndex }}
           aria-hidden={false}
-          initial={{ opacity: 1 }}
+          initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={MODAL_OVERLAY_FADE}
           onClick={() => (onBackdropClick ?? onClose)()}
         >
           <motion.div
-            className="absolute inset-0 bg-black/15"
-            initial={MODAL_BACKDROP_INITIAL}
-            animate={MODAL_BACKDROP_OPEN}
-            exit={MODAL_BACKDROP_EXIT}
-            transition={MODAL_BACKDROP_TRANSITION}
-          />
-          <motion.div
-            className={`settings-modal-panel relative overflow-hidden rounded-2xl border border-border bg-background shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] transform-gpu ${panelClassName}`}
+            className={`settings-modal-panel relative overflow-hidden rounded-2xl border border-border bg-popover shadow-[0_30px_80px_-20px_rgba(31,27,22,0.30)] transform-gpu ${panelClassName}`}
             initial={MODAL_PANEL_INITIAL}
             animate={MODAL_PANEL_OPEN}
-            exit={{ ...MODAL_PANEL_EXIT, transition: MODAL_CLOSE_TRANSITION }}
-            transition={MODAL_OPEN_TRANSITION}
+            exit={{ ...MODAL_PANEL_EXIT, transition: MODAL_SPRING_EXIT }}
+            transition={MODAL_SPRING}
             style={{ willChange: 'opacity, transform' }}
             onClick={(e: React.MouseEvent) => e.stopPropagation()}
           >
             {children}
           </motion.div>
-        </motion.div>
+        </ModalOverlayRoot>
       ) : null}
     </AnimatePresence>
   );
@@ -180,11 +173,11 @@ function SegmentedControl<T extends string>({
   // positioned at equal intervals.
   return (
     <div
-      className="relative inline-grid items-center rounded-xl border border-border bg-muted/60 p-1"
+      className="relative inline-grid items-center rounded-xl bg-secondary p-1"
       style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}
     >
       <div
-        className="segmented-thumb pointer-events-none absolute left-1 top-1 bottom-1 rounded-lg bg-background shadow-[0_1px_2px_rgba(15,23,42,0.08),0_8px_18px_-14px_rgba(15,23,42,0.25)]"
+        className="segmented-thumb pointer-events-none absolute left-1 top-1 bottom-1 rounded-lg bg-card shadow-[0_1px_2px_rgba(31,27,22,0.08),0_4px_10px_-6px_rgba(31,27,22,0.18)]"
         style={{
           width: `calc((100% - 8px) / ${n})`,
           transform: `translateX(${activeIndex * 100}%)`,
@@ -198,12 +191,12 @@ function SegmentedControl<T extends string>({
             type="button"
             disabled={option.disabled && !isActive}
             onClick={() => onChange(option.value)}
-            className={`segmented-label relative z-10 rounded-lg px-4 py-1.5 text-[13px] font-medium ${
+            className={`segmented-label relative z-10 rounded-lg px-4 py-1.5 text-[13px] ${
               isActive
-                ? 'text-foreground'
+                ? 'font-semibold text-foreground'
                 : option.disabled
-                  ? 'cursor-not-allowed text-muted-foreground/40'
-                  : 'text-muted-foreground hover:text-foreground'
+                  ? 'cursor-not-allowed font-medium text-muted-foreground/40'
+                  : 'font-medium text-muted-foreground hover:text-foreground'
             }`}
           >
             {option.label}
@@ -505,15 +498,19 @@ function FlagIcon({
 
 export default memo(function SettingsView({
   isOpen,
+  initialCategory,
   onClose,
   settings,
   devices,
+  onRefreshDevices,
   onUpdateSettings,
 }: {
   isOpen: boolean;
+  initialCategory?: string | null;
   onClose: () => void;
   settings: SettingsType | null;
   devices: MediaDeviceInfo[];
+  onRefreshDevices: () => Promise<void>;
   onUpdateSettings: (partial: Partial<SettingsType>) => Promise<unknown>;
 }) {
   const [activeCategory, setActiveCategory] = useState('General');
@@ -526,11 +523,17 @@ export default memo(function SettingsView({
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusPayload | null>(null);
   const [updateActionPending, setUpdateActionPending] = useState(false);
   const [appVersion, setAppVersion] = useState('');
+  const [entitlements, setEntitlements] = useState<EntitlementsPayload | null>(null);
   const hasChildModalOpenRef = useRef(false);
   const deferredSettingsQuery = useDeferredValue(settingsQuery);
   const appVisibilityLabel = navigator.platform.toLowerCase().includes('mac')
     ? 'Show app in dock'
     : 'Show app in taskbar';
+
+  useEffect(() => {
+    if (!isMicrophoneModalOpen) return;
+    void onRefreshDevices();
+  }, [isMicrophoneModalOpen, onRefreshDevices]);
 
   const getDefaultHotkeys = (target: HotkeyTarget) => {
     switch (target) {
@@ -559,6 +562,11 @@ export default memo(function SettingsView({
     setSettingsQuery('');
     setActiveCategory('General');
   }, [captureTarget, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !initialCategory) return;
+    setActiveCategory(initialCategory);
+  }, [initialCategory, isOpen]);
 
   useEffect(() => {
     return () => {
@@ -734,6 +742,27 @@ export default memo(function SettingsView({
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    void window.api.entitlementsGet().then((current) => {
+      if (!cancelled) {
+        setEntitlements(current);
+      }
+    }).catch((error) => {
+      console.error('Failed to load entitlements:', error);
+    });
+
+    const unsubscribe = window.api.onEntitlementsChanged((next) => {
+      setEntitlements(next);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
   const handleUpdateAction = async (action: 'check' | 'download' | 'install') => {
     setUpdateActionPending(true);
     try {
@@ -862,9 +891,7 @@ export default memo(function SettingsView({
   const microphoneOptions: SelectOption[] = useMemo(
     () => [
       { value: 'default', label: 'System Default', description: 'Use your current Windows input device.' },
-      ...devices
-        .filter((device) => device.deviceId !== 'default')
-        .map((device) => ({
+      ...devices.map((device) => ({
         value: device.deviceId,
         label: device.label || `Microphone ${device.deviceId.slice(0, 5)}...`,
       })),
@@ -902,13 +929,28 @@ export default memo(function SettingsView({
 
   if (!settings) return null;
 
-  const hasGroqKey = settings.groqApiKey.length > 0;
-  const showCloudKeyWarning = settings.useCloudTranscription && !hasGroqKey;
+  const hasProCloud = entitlements?.tier === 'pro' && !entitlements.fairUseExceeded;
+  const cloudEnabled = hasProCloud;
+  const cloudModeValue = hasProCloud && settings.useCloudTranscription ? 'cloud' : 'local';
 
-  const sidebarItems: Array<{ id: string; icon: ReactNode; label: string }> = [
-    { id: 'General', icon: <SettingsIcon size={16} />, label: 'General' },
-    { id: 'System', icon: <Monitor size={16} />, label: 'System' },
-    { id: 'Account', icon: <UserCircle2 size={16} />, label: 'Account' },
+  type SidebarItem = { id: string; icon: ReactNode; label: string };
+  type SidebarSection = { title: string; items: SidebarItem[] };
+
+  const sidebarSections: SidebarSection[] = [
+    {
+      title: 'Settings',
+      items: [
+        { id: 'General', icon: <SettingsIcon size={16} />, label: 'General' },
+        { id: 'System', icon: <Monitor size={16} />, label: 'System' },
+      ],
+    },
+    {
+      title: 'Account',
+      items: [
+        { id: 'Account', icon: <UserCircle2 size={16} />, label: 'Account' },
+        { id: 'Plans', icon: <CreditCard size={16} />, label: 'Plans & Billing' },
+      ],
+    },
   ];
 
   const normalizedSettingsQuery = deferredSettingsQuery.trim().toLowerCase();
@@ -941,21 +983,13 @@ export default memo(function SettingsView({
     'auto detect',
     selectedLanguageSummary
   );
-  // Transcription mode and the related Groq API key live in the System
-  // tab — they're configuration of *how the app talks to the cloud*
-  // rather than per-session preferences like microphone or shortcuts.
+  // Transcription mode lives in the System tab because it configures how
+  // the app talks to Echo cloud rather than per-session microphone choices.
   const showSystemMode = matchesSettingsSearch(
     'system',
     'transcription mode',
     'local',
     'cloud',
-    'cleanup'
-  );
-  const showSystemCloudKey = matchesSettingsSearch(
-    'system',
-    'api key',
-    'groq',
-    'cloud transcription',
     'cloud cleanup'
   );
   const hasGeneralMatches = showGeneralShortcuts || showGeneralMicrophone || showGeneralLanguages;
@@ -986,7 +1020,7 @@ export default memo(function SettingsView({
     'bottom'
   );
   const hasSystemMatches =
-    showSystemLaunch || showSystemOverlay || showSystemVisibility || showSystemPosition || showSystemMode || showSystemCloudKey;
+    showSystemLaunch || showSystemOverlay || showSystemVisibility || showSystemPosition || showSystemMode;
   const showSystemUpdates = matchesSettingsSearch(
     'system',
     'updates',
@@ -1004,28 +1038,181 @@ export default memo(function SettingsView({
   // hide internal rows here — the panel either shows or it doesn't.
   const hasAccountMatches = matchesSettingsSearch('account', 'sign out', 'sync', 'delete account', 'profile', 'email');
 
-  const filteredSidebarItems = sidebarItems.filter((item) => {
-    if (!hasSettingsSearch) return true;
-    if (item.id === 'General') return hasGeneralMatches;
-    if (item.id === 'System') return hasSystemMatches || showSystemUpdates;
-    if (item.id === 'Account') return hasAccountMatches;
-    return item.label.toLowerCase().includes(normalizedSettingsQuery);
-  });
+  // Plans & Billing is the dedicated subscription/upgrade page. Match a
+  // generous keyword set so users can find it via search regardless of
+  // whether they say "billing", "subscription", "pro", etc.
+  const hasPlansMatches = matchesSettingsSearch(
+    'plans',
+    'plan',
+    'billing',
+    'subscription',
+    'subscribe',
+    'pro',
+    'upgrade',
+    'invoice',
+    'payment',
+    'cancel'
+  );
+
+  const filteredSidebarSections = sidebarSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => {
+        if (!hasSettingsSearch) return true;
+        if (item.id === 'General') return hasGeneralMatches;
+        if (item.id === 'System') return hasSystemMatches || showSystemUpdates;
+        if (item.id === 'Plans') return hasPlansMatches;
+        if (item.id === 'Account') return hasAccountMatches;
+        return item.label.toLowerCase().includes(normalizedSettingsQuery);
+      }),
+    }))
+    .filter((section) => section.items.length > 0);
 
   const categoryMeta: Record<string, { title: string }> = {
     General: { title: 'General' },
     System: { title: 'System' },
+    Plans: { title: 'Plans & Billing' },
     Account: { title: 'Account' },
   };
 
   const activeMeta = categoryMeta[activeCategory] ?? { title: 'Settings' };
 
+  const primaryLanguageValue = languageSelection.selectedLanguages[0] ?? 'en';
+  const primaryLanguageLabel =
+    languageOptions.find((option) => option.value === primaryLanguageValue)?.label ?? 'English';
+  const languageDescription = languageSelection.autoDetectLanguage
+    ? `Auto-detect across all languages. ${primaryLanguageLabel} is your primary.`
+    : `${selectedLanguageSummary}. ${primaryLanguageLabel} is your primary.`;
+
+  const generalOptionRows = [
+    showGeneralShortcuts
+      ? {
+          key: 'shortcuts',
+          content: (
+            <div className="flex items-center justify-between gap-4 px-5 py-4">
+              <div className="min-w-0">
+                <div className="text-[15px] font-semibold text-foreground">Push-to-talk shortcut</div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-muted-foreground">
+                  <span>Hold</span>
+                  <span className="settings-hotkey-chip inline-flex min-h-[24px] items-center justify-center px-2 py-0.5 text-[13px] font-medium text-foreground/75">
+                    {formatHotkeyLabel(settings.pushToTalkHotkey?.[0] ?? DEFAULT_PUSH_TO_TALK_HOTKEY)}
+                  </span>
+                  <span>and speak. Release to transcribe.</span>
+                </div>
+              </div>
+              <button onMouseDown={(event) => event.preventDefault()} onClick={() => setIsShortcutsModalOpen(true)} className="echo-btn settings-option-btn shrink-0">Change</button>
+            </div>
+          ),
+        }
+      : null,
+    showGeneralMicrophone
+      ? {
+          key: 'microphone',
+          content: (
+            <div className="flex items-center justify-between gap-4 px-5 py-4">
+              <div className="min-w-0">
+                <div className="text-[15px] font-semibold text-foreground">Microphone</div>
+                <div className="mt-0.5 truncate text-[13px] text-muted-foreground">
+                  {selectedMicrophone.label}. <span style={{ color: 'var(--moss)' }}>Calibrated.</span>
+                </div>
+              </div>
+              <button onMouseDown={(event) => event.preventDefault()} onClick={() => setIsMicrophoneModalOpen(true)} className="echo-btn settings-option-btn shrink-0">Change</button>
+            </div>
+          ),
+        }
+      : null,
+    showGeneralLanguages
+      ? {
+          key: 'languages',
+          content: (
+            <div className="flex items-center justify-between gap-4 px-5 py-4">
+              <div className="min-w-0">
+                <div className="text-[15px] font-semibold text-foreground">Languages</div>
+                <div className="mt-0.5 text-[13px] text-muted-foreground">{languageDescription}</div>
+              </div>
+              <button onMouseDown={(event) => event.preventDefault()} onClick={() => setIsLanguageModalOpen(true)} className="echo-btn settings-option-btn shrink-0">Change</button>
+            </div>
+          ),
+        }
+      : null,
+  ].filter(Boolean) as Array<{ key: string; content: ReactNode }>;
+
+  const systemOptionRows = [
+    showSystemLaunch
+      ? {
+          key: 'launch',
+          content: (
+            <RowV2 label="Launch app at login">
+              <AnimatedSwitch checked={settings.launchAtStartup} onChange={(checked) => onUpdateSettings({ launchAtStartup: checked })} />
+            </RowV2>
+          ),
+        }
+      : null,
+    showSystemOverlay
+      ? {
+          key: 'overlay',
+          content: (
+            <RowV2 label="Show Echo pill">
+              <AnimatedSwitch checked={settings.showOverlay} onChange={(checked) => onUpdateSettings({ showOverlay: checked })} />
+            </RowV2>
+          ),
+        }
+      : null,
+    showSystemVisibility
+      ? {
+          key: 'visibility',
+          content: (
+            <RowV2 label={appVisibilityLabel}>
+              <AnimatedSwitch checked={settings.showAppInDock ?? true} onChange={handleAppInDockToggle} />
+            </RowV2>
+          ),
+        }
+      : null,
+    showSystemPosition
+      ? {
+          key: 'position',
+          content: (
+            <RowV2 label="Overlay position" description="Adjust where the overlay appears on screen.">
+              <SegmentedControl<'top-center' | 'bottom-center'>
+                value={settings.overlayPosition === 'bottom-center' ? 'bottom-center' : 'top-center'}
+                onChange={(next) => onUpdateSettings({ overlayPosition: next })}
+                options={[
+                  { value: 'top-center', label: 'Top' },
+                  { value: 'bottom-center', label: 'Bottom' },
+                ]}
+              />
+            </RowV2>
+          ),
+        }
+      : null,
+    showSystemMode
+      ? {
+          key: 'mode',
+          content: (
+            <RowV2
+              label="Transcription mode"
+              description={hasProCloud
+                ? 'Cloud uses Echo Pro. Local stays on-device.'
+                : 'Local stays on-device. Cloud is included with Echo Pro.'}
+            >
+              <ModeToggle
+                value={cloudModeValue}
+                cloudEnabled={cloudEnabled}
+                onChange={(value) => onUpdateSettings({ useCloudTranscription: value === 'cloud' })}
+              />
+            </RowV2>
+          ),
+        }
+      : null,
+  ].filter(Boolean) as Array<{ key: string; content: ReactNode }>;
+
   useEffect(() => {
-    if (!filteredSidebarItems.length) return;
-    if (!filteredSidebarItems.some((item) => item.id === activeCategory)) {
-      setActiveCategory(filteredSidebarItems[0].id);
+    const allFilteredItems = filteredSidebarSections.flatMap((s) => s.items);
+    if (!allFilteredItems.length) return;
+    if (!allFilteredItems.some((item) => item.id === activeCategory)) {
+      setActiveCategory(allFilteredItems[0].id);
     }
-  }, [activeCategory, filteredSidebarItems]);
+  }, [activeCategory, filteredSidebarSections]);
 
   return (
     <SettingsModalShell
@@ -1037,9 +1224,6 @@ export default memo(function SettingsView({
     >
         {/* Sidebar */}
         <aside className="flex w-[220px] shrink-0 flex-col border-r border-border bg-muted/55 px-3 pt-6 pb-4">
-          <div className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Settings
-          </div>
           <div className="mb-3 px-2">
             <label className="relative block">
               <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -1048,24 +1232,31 @@ export default memo(function SettingsView({
                 value={settingsQuery}
                 onChange={(event) => setSettingsQuery(event.target.value)}
                 placeholder="Search settings"
-                className="h-9 w-full rounded-xl border border-border bg-background/85 pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/20"
+                className="h-9 w-full rounded-xl border border-border bg-popover/85 pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground"
               />
             </label>
           </div>
-          <div className="flex-1">
-            <nav className="space-y-1.5">
-              {filteredSidebarItems.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveCategory(item.id)}
-                  className={`nav-item ${activeCategory === item.id ? 'is-active' : ''}`}
-                >
-                  <span className="text-foreground">{item.icon}</span>
-                  {item.label}
-                </button>
-              ))}
-            </nav>
-            {filteredSidebarItems.length === 0 && (
+          <div className="flex-1 overflow-y-auto">
+            {filteredSidebarSections.map((section, sectionIndex) => (
+              <div key={section.title} className={sectionIndex > 0 ? 'mt-5' : ''}>
+                <div className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  {section.title}
+                </div>
+                <nav className="space-y-1">
+                  {section.items.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => setActiveCategory(item.id)}
+                      className={`nav-item ${activeCategory === item.id ? 'is-active' : ''}`}
+                    >
+                      <span className="text-foreground">{item.icon}</span>
+                      {item.label}
+                    </button>
+                  ))}
+                </nav>
+              </div>
+            ))}
+            {filteredSidebarSections.length === 0 && (
               <div className="px-3 pt-3 text-xs leading-relaxed text-muted-foreground">
                 No settings match that search.
               </div>
@@ -1080,7 +1271,7 @@ export default memo(function SettingsView({
         </aside>
 
         {/* Content Area */}
-        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-popover">
           {/* Header */}
           <div className="flex items-start justify-between gap-4 px-8 pt-8 pb-2">
             <h1 className="page-title">{activeMeta.title}</h1>
@@ -1094,192 +1285,27 @@ export default memo(function SettingsView({
           </div>
 
           <div className="h-full overflow-y-auto px-8 pt-6 pb-6">
-            <div className="mx-auto max-w-[620px]">
-              {filteredSidebarItems.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-border bg-background/70 px-5 py-10 text-center">
-                  <div className="text-base font-semibold text-foreground">No matching settings</div>
-                  <div className="mt-1.5 text-sm text-muted-foreground">
+            <div className="mx-auto min-h-full max-w-[620px]">
+              {filteredSidebarSections.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border bg-popover/70 px-5 py-10 text-center">
+                  <div className="text-[15px] font-semibold text-foreground">No matching settings</div>
+                  <div className="mt-1.5 text-[13px] text-muted-foreground">
                     Try a different term like "microphone", "overlay", or "startup".
                   </div>
                 </div>
               ) : activeCategory === 'General' && hasGeneralMatches ? (
-                <div className="space-y-5">
-                  {(showGeneralShortcuts || showGeneralMicrophone || showGeneralLanguages) && (
-                    <div className="overflow-hidden rounded-xl border border-border bg-background">
-                      {showGeneralShortcuts && (
-                        <div className="flex items-center justify-between px-5 py-4">
-                          <div>
-                            <div className="text-base font-semibold text-foreground">Shortcuts</div>
-                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-                              <span>Hold</span>
-                              <span className="settings-hotkey-chip inline-flex min-h-[28px] items-center justify-center px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#1E3A5F]">
-                                {formatHotkeyLabel(settings.pushToTalkHotkey?.[0] ?? DEFAULT_PUSH_TO_TALK_HOTKEY)}
-                              </span>
-                              <span>and speak.</span>
-                            </div>
-                          </div>
-                          <button onMouseDown={(event) => event.preventDefault()} onClick={() => setIsShortcutsModalOpen(true)} className="settings-action-button h-8 rounded-md px-7 text-sm font-medium text-foreground transition-colors">Change</button>
-                        </div>
-                      )}
-
-                      {showGeneralShortcuts && (showGeneralMicrophone || showGeneralLanguages) && <div className="mx-5 h-px bg-foreground/5" />}
-
-                      {showGeneralMicrophone && (
-                        <div className="px-5 py-4">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <div className="text-base font-semibold text-foreground">Microphone</div>
-                              <div className="mt-0.5 max-w-[260px] truncate text-sm text-muted-foreground">{selectedMicrophone.label}</div>
-                            </div>
-                            <button onMouseDown={(event) => event.preventDefault()} onClick={() => setIsMicrophoneModalOpen(true)} className="settings-action-button h-8 rounded-md px-7 text-sm font-medium text-foreground transition-colors">Change</button>
-                          </div>
-                          <div className="mt-3">
-                            <MicTestButton selectedMic={settings.microphoneId} />
-                          </div>
-                        </div>
-                      )}
-
-                      {showGeneralMicrophone && showGeneralLanguages && <div className="mx-5 h-px bg-foreground/5" />}
-
-                      {showGeneralLanguages && (
-                        <div className="flex items-center justify-between px-5 py-4">
-                          <div>
-                            <div className="text-base font-semibold text-foreground">Languages</div>
-                            <div className="mt-0.5 text-sm text-muted-foreground">{selectedLanguageSummary}</div>
-                          </div>
-                          <button onMouseDown={(event) => event.preventDefault()} onClick={() => setIsLanguageModalOpen(true)} className="settings-action-button h-8 rounded-md px-7 text-sm font-medium text-foreground transition-colors">Change</button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                </div>
+                <SettingsOptionsCard rows={generalOptionRows} />
               ) : activeCategory === 'Account' && hasAccountMatches ? (
-                <AccountView />
-              ) : activeCategory === 'System' && (hasSystemMatches || showSystemUpdates) ? (
-                <div className="space-y-6">
-                  {(showSystemLaunch || showSystemOverlay || showSystemVisibility || showSystemPosition) && (
-                  <section>
-                    <h2 className="mb-3 text-base font-semibold text-foreground">App settings</h2>
-                    <div className="overflow-hidden rounded-xl border border-border bg-background">
-                      {showSystemLaunch && (
-                        <RowV2 label="Launch app at login">
-                          <AnimatedSwitch checked={settings.launchAtStartup} onChange={(checked) => onUpdateSettings({ launchAtStartup: checked })} />
-                        </RowV2>
-                      )}
-                      {showSystemLaunch && (showSystemOverlay || showSystemVisibility || showSystemPosition) && <div className="mx-5 h-px bg-foreground/5" />}
-                      {showSystemOverlay && (
-                        <RowV2 label="Show Echo pill">
-                          <AnimatedSwitch checked={settings.showOverlay} onChange={(checked) => onUpdateSettings({ showOverlay: checked })} />
-                        </RowV2>
-                      )}
-                      {showSystemOverlay && (showSystemVisibility || showSystemPosition) && <div className="mx-5 h-px bg-foreground/5" />}
-                      {showSystemVisibility && (
-                        <RowV2 label={appVisibilityLabel}>
-                          <AnimatedSwitch checked={settings.showAppInDock ?? true} onChange={handleAppInDockToggle} />
-                        </RowV2>
-                      )}
-                      {showSystemVisibility && showSystemPosition && <div className="mx-5 h-px bg-foreground/5" />}
-                      {showSystemPosition && (
-                        <RowV2 label="Overlay position" description="Adjust where the overlay appears on screen.">
-                          <SegmentedControl<'top-center' | 'bottom-center'>
-                            value={settings.overlayPosition === 'bottom-center' ? 'bottom-center' : 'top-center'}
-                            onChange={(next) => onUpdateSettings({ overlayPosition: next })}
-                            options={[
-                              { value: 'top-center', label: 'Top' },
-                              { value: 'bottom-center', label: 'Bottom' },
-                            ]}
-                          />
-                        </RowV2>
-                      )}
-                    </div>
-                  </section>
-                  )}
-
-                  {(showSystemMode || showSystemCloudKey) && (
-                    <section>
-                      <h2 className="mb-3 text-base font-semibold text-foreground">Transcription</h2>
-                      <div className="rounded-xl border border-border bg-background">
-                        {showSystemMode && (
-                          <RowV2
-                            label="Transcription mode"
-                            description="Local stays on-device. Cloud uses Groq for transcription and cleanup."
-                          >
-                            <ModeToggle
-                              value={settings.useCloudTranscription ? 'cloud' : 'local'}
-                              cloudEnabled={hasGroqKey}
-                              onChange={(value) => onUpdateSettings({ useCloudTranscription: value === 'cloud' })}
-                            />
-                          </RowV2>
-                        )}
-
-                        {showSystemMode && showCloudKeyWarning && (
-                          <div className="px-5 pb-3">
-                            <div className="rounded-lg border border-border bg-destructive/5 px-3 py-2 text-sm font-medium text-foreground">
-                              Cloud mode is selected, but no Groq API key is saved.
-                            </div>
-                          </div>
-                        )}
-
-                        {showSystemMode && showSystemCloudKey && <div className="mx-5 h-px bg-foreground/5" />}
-
-                        {showSystemCloudKey && (
-                          <div className="px-5 py-4">
-                            <div className="flex items-start justify-between gap-4">
-                              <div className="min-w-0">
-                                <div className="text-base font-semibold text-foreground">Cloud API key (Groq)</div>
-                                <div className="mt-0.5 text-sm text-muted-foreground">Required for Cloud transcription and cloud cleanup.</div>
-                              </div>
-                              <button type="button" onClick={() => window.api.openApiKeyPage()} className="settings-action-button h-8 shrink-0 rounded-md px-5 text-sm font-medium text-foreground transition-colors">Get key</button>
-                            </div>
-                            <div className="mt-3">
-                              <ApiKeyInput
-                                value={settings.groqApiKey ?? ''}
-                                onSave={async (key) => {
-                                  // Clearing the key never needs validation.
-                                  if (!key) {
-                                    try {
-                                      await window.api.clearGroqApiKey();
-                                      toast.success('API key removed');
-                                      if (onUpdateSettings) void onUpdateSettings({});
-                                    } catch (err) {
-                                      console.error('Failed to clear API key:', err);
-                                      toast.error('Could not remove API key. Try again.');
-                                    }
-                                    return;
-                                  }
-
-                                  // Verify against Groq BEFORE persisting so
-                                  // a typo'd / non-Groq key never gets saved
-                                  // and silently confirmed. The main-process
-                                  // `set-groq-api-key` IPC has no built-in
-                                  // verification — we have to gate it here.
-                                  try {
-                                    const result = await window.api.testGroqApiKey(key);
-                                    if (!result?.ok) {
-                                      const reason = (result?.error as string | undefined)?.trim();
-                                      toast.error(reason
-                                        ? `API key was rejected: ${reason}`
-                                        : 'That key was rejected by Groq. Check the value and try again.');
-                                      return;
-                                    }
-                                    await window.api.setGroqApiKey(key);
-                                    toast.success('API key saved');
-                                    if (onUpdateSettings) void onUpdateSettings({});
-                                  } catch (err) {
-                                    console.error('Failed to save API key:', err);
-                                    const reason = (err as { message?: string })?.message?.trim();
-                                    toast.error(reason || 'Could not save API key. Check the value and try again.');
-                                  }
-                                }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </section>
-                  )}
+                <div className="flex min-h-full flex-col">
+                  <AccountView
+                    cloudVisible={entitlements?.tier === 'pro'}
+                    onUpgradeClick={() => setActiveCategory('Plans')}
+                  />
                 </div>
+              ) : activeCategory === 'Plans' && hasPlansMatches ? (
+                <PlansBilling />
+              ) : activeCategory === 'System' && (hasSystemMatches || showSystemUpdates) ? (
+                <SettingsOptionsCard rows={systemOptionRows} />
               ) : null}
             </div>
           </div>
@@ -1382,14 +1408,14 @@ function SidebarUpdatePanel({
 
   return (
     <section className="mt-4 border-t border-foreground/[0.04] px-2 pt-3">
-      <div className="rounded-xl border border-border bg-background/80 p-3 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+      <div className="rounded-xl bg-card/80 p-3">
         <div className="flex items-start gap-2.5">
-          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${state === 'available' || state === 'downloading' || state === 'ready' ? 'bg-emerald-50 text-emerald-700' : 'bg-muted text-muted-foreground'}`}>
+          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${state === 'available' || state === 'downloading' || state === 'ready' ? 'bg-[hsl(var(--success-soft))] text-[hsl(var(--success))]' : 'bg-muted text-muted-foreground'}`}>
             <Icon size={16} className={isChecking || isDownloading ? 'animate-spin' : undefined} />
           </span>
           <div className="min-w-0 flex-1">
             <div className="truncate text-[13px] font-semibold text-foreground">{title}</div>
-            <div className="mt-0.5 line-clamp-2 text-[12px] leading-4 text-muted-foreground">
+            <div className="mt-0.5 line-clamp-2 text-[13px] leading-4 text-muted-foreground">
               {state === 'error' && status?.error ? status.error : description}
             </div>
           </div>
@@ -1403,7 +1429,7 @@ function SidebarUpdatePanel({
           type="button"
           onClick={() => void onAction(action)}
           disabled={disabled}
-          className="settings-action-button mt-3 inline-flex h-8 w-full items-center justify-center gap-2 rounded-md px-3 text-[12px] font-semibold text-foreground transition-colors disabled:cursor-default disabled:opacity-45"
+          className="settings-action-button mt-3 inline-flex h-8 w-full items-center justify-center gap-2 rounded-lg px-5 text-[12px] font-semibold text-foreground transition-colors disabled:cursor-default disabled:opacity-45"
         >
           <Icon size={14} className={isChecking || isDownloading ? 'animate-spin' : undefined} />
           {pending ? 'Starting' : actionLabel}
@@ -1412,6 +1438,22 @@ function SidebarUpdatePanel({
     </section>
   );
 }
+
+function SettingsOptionsCard({ rows }: { rows: Array<{ key: string; content: ReactNode }> }) {
+  if (!rows.length) return null;
+
+  return (
+    <div className="settings-modal-card">
+      {rows.map((row, index) => (
+        <div key={row.key}>
+          {index > 0 ? <div className="mx-5 h-px bg-border" /> : null}
+          {row.content}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RowV2({
   label,
   description,
@@ -1424,9 +1466,9 @@ function RowV2({
   return (
     <div className="flex items-center justify-between gap-4 px-5 py-3.5">
       <div className="min-w-0">
-        <div className="text-base font-semibold text-foreground">{label}</div>
+        <div className="text-[15px] font-semibold text-foreground">{label}</div>
         {description ? (
-          <div className="mt-0.5 text-sm text-muted-foreground">{description}</div>
+          <div className="mt-0.5 text-[13px] text-muted-foreground">{description}</div>
         ) : null}
       </div>
       <div className="shrink-0">{children}</div>
@@ -1447,7 +1489,7 @@ function AnimatedSwitch({ checked, onChange }: { checked: boolean; onChange: (ch
     >
       <span
         aria-hidden="true"
-        className="absolute top-[2px] left-[2px] h-[18px] w-[18px] rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.15)] transition-transform duration-150 ease-out will-change-transform"
+        className="absolute top-[2px] left-[2px] h-[18px] w-[18px] rounded-full bg-popover shadow-[0_1px_2px_rgba(31,27,22,0.18)] transition-transform duration-150 ease-out will-change-transform"
         style={{ transform: checked ? 'translateX(18px)' : 'translateX(0px)' }}
       />
     </button>
@@ -1472,155 +1514,6 @@ function ModeToggle({
         { value: 'cloud', label: 'Cloud', disabled: !cloudEnabled },
       ]}
     />
-  );
-}
-
-function ApiKeyInput({
-  value,
-  onSave,
-}: {
-  value: string;
-  onSave: (key: string) => Promise<void> | void;
-}) {
-  // `value` is the hydrated settings field — when a key is saved the main
-  // process masks it as "••••••••". We NEVER seed that mask into the input,
-  // because typing or pasting next to it would corrupt the saved key. The
-  // masked state is communicated with the placeholder / "Saved" badge only.
-  const hasSavedKey = Boolean((value ?? '').trim());
-  const [draft, setDraft] = useState('');
-  const [show, setShow] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
-  const trimmedDraft = draft.trim();
-  const isDirty = trimmedDraft.length > 0;
-
-  // When an outer update flips the saved-key state (e.g. after clearing),
-  // make sure the draft doesn't stick around.
-  useEffect(() => {
-    if (!hasSavedKey) setDraft((d) => d);
-  }, [hasSavedKey]);
-
-  const handleSave = async () => {
-    if (!trimmedDraft) return;
-    setSaving(true);
-    try {
-      await onSave(trimmedDraft);
-      setDraft('');
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleClear = async () => {
-    setSaving(true);
-    try {
-      await onSave('');
-      setDraft('');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleTest = async () => {
-    if (isDirty && !trimmedDraft) {
-      setTestResult('error');
-      setTimeout(() => setTestResult(null), 3000);
-      return;
-    }
-
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const result = isDirty
-        ? await window.api.testGroqApiKey(trimmedDraft)
-        : hasSavedKey
-          ? await window.api.testSavedGroqApiKey()
-          : { ok: false as const, error: 'No saved API key.' };
-      setTestResult(result.ok ? 'success' : 'error');
-    } catch {
-      setTestResult('error');
-    }
-    setTesting(false);
-    setTimeout(() => setTestResult(null), 3000);
-  };
-
-  const placeholder = hasSavedKey ? 'Paste a new key to replace the saved one' : 'gsk_...';
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <div className="relative min-w-0 flex-1">
-          <input
-            type={show ? 'text' : 'password'}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder={placeholder}
-            className="h-9 w-full rounded-lg border border-border bg-background/60 pl-3 pr-9 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/20"
-          />
-          <button
-            type="button"
-            onClick={() => setShow(!show)}
-            className="settings-button-no-press absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-          >
-            {show ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-        </div>
-        <button
-          type="button"
-          disabled={!isDirty || saving}
-          onClick={handleSave}
-          className="h-9 w-[72px] shrink-0 rounded-md bg-primary text-sm font-medium text-primary-foreground transition-all hover:opacity-90 disabled:opacity-40"
-        >
-          {saving ? '...' : saved ? <Check size={16} className="mx-auto" /> : 'Save'}
-        </button>
-        <button
-          type="button"
-          disabled={testing || (!isDirty && !hasSavedKey)}
-          onClick={handleTest}
-          className={`relative group/btn flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition-all disabled:opacity-40 ${
-            testResult === 'success'
-              ? 'bg-emerald-500 text-white'
-              : testResult === 'error'
-                ? 'bg-red-500 text-white'
-                : 'bg-white/80 text-foreground hover:bg-white'
-          }`}
-        >
-          {testResult === 'success' ? (
-            <Check size={16} />
-          ) : testResult === 'error' ? (
-            <X size={16} />
-          ) : (
-            <Wifi size={14} />
-          )}
-          <div className="pointer-events-none absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity group-hover/btn:opacity-100">
-            Test API key
-            <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px">
-              <div className="border-4 border-transparent border-t-neutral-900"></div>
-            </div>
-          </div>
-        </button>
-      </div>
-      {hasSavedKey && (
-        <div className="flex items-center justify-between gap-2 px-1 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-500">
-            <Check size={12} />
-            API key saved
-          </span>
-          <button
-            type="button"
-            onClick={handleClear}
-            disabled={saving}
-            className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-40"
-          >
-            Remove saved key
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -1659,24 +1552,24 @@ function ShortcutsModal({
     <SettingsModalShell
       open={open}
       onClose={handleClose}
-      panelClassName="w-full max-w-[620px] max-h-[calc(100vh-48px)] overflow-y-auto"
+      panelClassName="w-full max-w-[480px] max-h-[calc(100vh-48px)] overflow-y-auto"
     >
       <div className="p-6">
-        <div className="mb-5 flex items-start justify-between">
+        <div className="echo-modal-header mb-0 flex items-start justify-between pr-0">
           <div>
-            <h2 className="text-[15px] font-semibold text-foreground">Shortcuts</h2>
-            <p className="mt-0.5 text-[13px] text-muted-foreground">Choose your preferred shortcuts for Echo.</p>
+            <h2 className="echo-modal-title">Shortcuts</h2>
+            <p className="echo-modal-description">Choose your preferred shortcuts for Echo.</p>
           </div>
           <button onClick={handleClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><X size={16} /></button>
         </div>
 
-        <div className="space-y-3">
+        <div className="echo-modal-body mt-5">
           <ShortcutCard title="Push to talk" description="Hold to dictate, release to stop." target="pushToTalkHotkey" hotkeys={pushToTalkHotkeys} captureTarget={captureTarget} message={hotkeyMessages.pushToTalkHotkey} onCapture={onCapture} onRemove={onRemove} />
           <ShortcutCard title="Toggle dictation" description="Press once to start, again to stop." target="toggleHotkey" hotkeys={toggleHotkeys} captureTarget={captureTarget} message={hotkeyMessages.toggleHotkey} onCapture={onCapture} onRemove={onRemove} />
           <ShortcutCard title="Cancel" description="Dismiss dictation" target="cancelHotkey" hotkeys={cancelHotkeys} captureTarget={captureTarget} message={hotkeyMessages.cancelHotkey} onCapture={onCapture} onRemove={onRemove} allowMultiple={false} />
         </div>
 
-        <div className="mt-5">
+        <div className="echo-modal-footer justify-start">
           <button onClick={onReset} className="btn-secondary">
             Reset to default
           </button>
@@ -1702,12 +1595,12 @@ const LanguageOptionButton = memo(function LanguageOptionButton({
       type="button"
       disabled={disabled}
       onClick={() => onToggle(option.value)}
-      className={`flex h-9 items-center gap-2 rounded-md border border-black/[0.06] px-2.5 text-left text-sm transition-colors ${
+      className={`settings-modal-field flex h-9 items-center gap-2 rounded-md px-2.5 text-left text-sm transition-colors ${
         disabled
           ? 'cursor-not-allowed opacity-40'
           : isSelected
-          ? 'border-primary/30 bg-primary/5 font-semibold text-foreground'
-          : 'text-foreground/80 hover:bg-accent/40'
+          ? 'border-primary/30 bg-secondary font-semibold text-foreground'
+          : 'text-foreground/80'
       }`}
     >
       <FlagIcon language={option.value} label={option.label} className="h-3.5 w-5 rounded-[2px] border-0 shadow-none" />
@@ -1776,14 +1669,14 @@ function LanguageModal({
       panelClassName="flex h-[min(580px,calc(100vh-88px))] w-[min(780px,calc(100vw-40px))] flex-col"
     >
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-6 py-4">
+      <div className="echo-modal-shell-header">
         <div>
-          <h2 className="text-[15px] font-semibold text-foreground">Preferred language</h2>
-          <p className="mt-0.5 text-[13px] text-muted-foreground">Pick the languages Echo should expect.</p>
+          <h2 className="echo-modal-title">Preferred language</h2>
+          <p className="echo-modal-description">Pick the languages Echo should expect.</p>
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <span className="text-[12px] font-medium text-muted-foreground">Auto-detect</span>
+            <span className="text-[13px] font-medium text-muted-foreground">Auto-detect</span>
             <AnimatedSwitch checked={draftAutoDetectEnabled} onChange={setDraftAutoDetectEnabled} />
           </div>
           <button onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><X size={16} /></button>
@@ -1794,7 +1687,7 @@ function LanguageModal({
       <div className="flex min-h-0 flex-1 gap-5 px-6 pb-5 pt-4">
         {/* Left: search + grid */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="mb-3 flex h-9 items-center gap-2 rounded-lg border border-border bg-muted/30 px-3">
+          <div className="settings-modal-field mb-3 flex h-9 items-center gap-2 rounded-lg px-3">
             <Search size={14} className="shrink-0 text-muted-foreground" />
             <input
               autoFocus
@@ -1831,11 +1724,11 @@ function LanguageModal({
           <div className="mb-2 section-title">Selected</div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {draftAutoDetectEnabled ? (
-              <p className="text-[12px] italic text-muted-foreground">Auto-detecting any language</p>
+              <p className="text-[13px] italic text-muted-foreground">Auto-detecting any language</p>
             ) : selectedOptions.length ? (
               <div className="space-y-1.5">
                 {selectedOptions.map((option) => (
-                  <div key={option.value} className="flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 text-[13px] text-foreground">
+                  <div key={option.value} className="settings-modal-field flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-foreground">
                     <FlagIcon language={option.value} label={option.label} className="h-3.5 w-5 rounded-[2px] border-0 shadow-none" />
                     <span className="min-w-0 flex-1 truncate">{option.label}</span>
                     {draftValues.length > 1 && (
@@ -1851,7 +1744,7 @@ function LanguageModal({
                 ))}
               </div>
             ) : (
-              <p className="text-[12px] italic text-muted-foreground">No languages selected</p>
+              <p className="text-[13px] italic text-muted-foreground">No languages selected</p>
             )}
           </div>
           <div className="mt-3 flex flex-col gap-2">
@@ -1871,6 +1764,24 @@ function LanguageModal({
   );
 }
 
+function MicLevelBars({ bars, className = '' }: { bars: number[]; className?: string }) {
+  return (
+    <div className={`settings-modal-field flex h-10 items-end justify-center gap-[3px] rounded-lg px-3 py-2 ${className}`}>
+      {bars.map((value, index) => {
+        const height = Math.max(4, value * 28);
+        const hue = value > 0.7 ? 'from-red-500 to-orange-400' : value > 0.4 ? 'from-yellow-500 to-green-400' : 'from-green-500 to-green-400';
+        return (
+          <div
+            key={index}
+            className={`w-[5px] rounded-full bg-gradient-to-t ${hue}`}
+            style={{ height: `${height}px`, opacity: 0.25 + value * 0.75 }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 function MicrophoneModal({
   open,
   options,
@@ -1884,40 +1795,80 @@ function MicrophoneModal({
   onClose: () => void;
   onSave: (id: string) => Promise<void>;
 }) {
+  const { bars, error, toggleDeviceTest, isTestingDevice, testingDeviceKey } = useMicTest(open);
+
   return (
     <SettingsModalShell
       open={open}
       onClose={onClose}
-      panelClassName="flex w-full max-w-[560px] max-h-[calc(100vh-40px)] flex-col"
+      panelClassName="flex w-full max-w-[480px] max-h-[calc(100vh-40px)] flex-col"
     >
-      <div className="flex items-start justify-between border-b border-border px-5 py-4">
+      <div className="echo-modal-shell-header">
         <div>
-          <h2 className="text-[15px] font-semibold text-foreground">Microphone</h2>
-          <p className="mt-0.5 text-[13px] text-muted-foreground">Choose the input device for dictation.</p>
+          <h2 className="echo-modal-title">Microphone</h2>
+          <p className="echo-modal-description">Choose the input device for dictation.</p>
         </div>
         <button onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><X size={16} /></button>
       </div>
 
-      <div className="flex-1 space-y-1 overflow-y-auto p-3">
+      <div className="flex-1 space-y-2 overflow-y-auto p-4">
         {options.map((option) => {
           const isSelected = option.value === selectedValue;
+          const isTesting = isTestingDevice(option.value);
+
           return (
-            <button
-              type="button"
-              key={option.value}
-              onClick={() => onSave(option.value)}
-              className={`flex w-full items-center justify-between rounded-md px-3.5 py-3 text-left transition-colors ${
-                isSelected ? 'border border-foreground/15 bg-foreground/5' : 'border border-transparent hover:bg-accent/50'
-              }`}
-            >
-              <div className="min-w-0 flex-1 pr-3">
-                <div className={`text-[14px] ${isSelected ? 'font-semibold text-foreground' : 'font-medium text-foreground/75'}`}>{option.label}</div>
-                {option.description && <div className="mt-0.5 text-[12px] text-muted-foreground">{option.description}</div>}
+            <div key={option.value} className="space-y-1.5">
+              <div
+                className={`settings-modal-field flex items-stretch gap-2 rounded-md p-1.5 transition-colors ${
+                  isSelected ? 'border-primary/30 bg-secondary' : ''
+                } ${isTesting ? 'ring-1 ring-primary/15' : ''}`}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSave(option.value)}
+                  className="flex min-w-0 flex-1 items-center justify-between rounded-md px-2 py-1.5 text-left"
+                >
+                  <div className="min-w-0 pr-3">
+                    <div className={`text-[15px] ${isSelected ? 'font-semibold text-foreground' : 'font-medium text-foreground/80'}`}>
+                      {option.label}
+                    </div>
+                    {option.description ? (
+                      <div className="mt-0.5 text-[13px] text-muted-foreground">{option.description}</div>
+                    ) : null}
+                  </div>
+                  {isSelected ? <Check size={16} className="shrink-0 text-foreground" /> : null}
+                </button>
+                <button
+                  type="button"
+                  title={isTesting ? 'Stop microphone test' : `Test ${option.label}`}
+                  aria-label={isTesting ? 'Stop microphone test' : `Test ${option.label}`}
+                  aria-pressed={isTesting}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void toggleDeviceTest(option.value);
+                  }}
+                  className={`echo-btn settings-option-btn inline-flex h-10 w-10 shrink-0 items-center justify-center px-0 ${
+                    isTesting ? 'text-destructive ring-1 ring-destructive/20' : ''
+                  }`}
+                >
+                  <Mic size={15} />
+                </button>
               </div>
-              {isSelected && <Check size={16} className="shrink-0 text-foreground" />}
-            </button>
+
+              {isTesting ? (
+                <div className="px-1.5">
+                  <MicLevelBars bars={bars} />
+                  <p className="mt-1 text-[12px] text-muted-foreground">Speak to test this microphone…</p>
+                </div>
+              ) : null}
+            </div>
           );
         })}
+
+        {error && testingDeviceKey ? (
+          <p className="px-1.5 text-[13px] font-medium text-destructive">{error}</p>
+        ) : null}
       </div>
     </SettingsModalShell>
   );
@@ -1948,18 +1899,18 @@ function ShortcutCard({
   const displayedHotkeys = isAppending ? [...hotkeys, ''] : hotkeys;
 
   return (
-    <section className="rounded-xl border border-border bg-background px-5 py-4">
+    <section className="settings-modal-card px-5 py-4">
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px] md:items-start">
         <div className="min-w-0">
-          <div className="text-base font-semibold text-foreground">{title}</div>
-          <div className="mt-0.5 text-sm text-muted-foreground">{description}</div>
-          {message && <div className="mt-1.5 text-[14px] font-medium text-muted-foreground">{message}</div>}
+          <div className="text-[15px] font-semibold text-foreground">{title}</div>
+          <div className="mt-0.5 text-[13px] text-muted-foreground">{description}</div>
+          {message && <div className="mt-1.5 text-[13px] font-medium text-muted-foreground">{message}</div>}
           {!isAppending && allowMultiple && (
             <button
               type="button"
               onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
               onClick={() => onCapture(target, hotkeys.length)}
-              className="mt-3 h-8 rounded-md bg-white px-5 text-sm font-medium text-foreground shadow-[0_1px_2px_rgba(15,23,42,0.06)] transition-colors hover:bg-white/90"
+              className="echo-btn settings-option-btn mt-3"
             >
               Add another
             </button>
@@ -1977,8 +1928,8 @@ function ShortcutCard({
                   type="button"
                   onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
                   onClick={() => onCapture(target, index)}
-                  className={`w-full min-w-[220px] rounded-md border px-3 py-2 text-left transition-all ${
-                    isCapturing ? 'border-foreground/20 bg-foreground/5' : 'border-border hover:border-foreground/15'
+                  className={`settings-modal-field w-full min-w-[220px] rounded-md px-3 py-2 text-left transition-all ${
+                    isCapturing ? 'border-primary/30 bg-secondary ring-1 ring-primary/15' : ''
                   }`}
                 >
                   <div className="flex min-h-[22px] items-center justify-between gap-2">
@@ -2002,143 +1953,6 @@ function ShortcutCard({
   );
 }
 
-function MicTestButton({ selectedMic }: { selectedMic: string }) {
-  const [testing, setTesting] = useState(false);
-  const [bars, setBars] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
-  const [error, setError] = useState('');
-  const animFrameRef = useRef<number>(0);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const smoothedBarsRef = useRef<number[]>([0, 0, 0, 0, 0, 0, 0]);
-  const BAR_COUNT = 7;
-
-  const stopTesting = () => {
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-      animFrameRef.current = 0;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    analyserRef.current = null;
-    setTesting(false);
-    setBars([0, 0, 0, 0, 0, 0, 0]);
-    smoothedBarsRef.current = [0, 0, 0, 0, 0, 0, 0];
-  };
-
-  const startTesting = async () => {
-    setError('');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: selectedMic ? { deviceId: { exact: selectedMic } } : true,
-      });
-      streamRef.current = stream;
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
-      const source = audioContext.createMediaStreamSource(stream);
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 1024;
-      analyser.smoothingTimeConstant = 0.2;
-      source.connect(analyser);
-      analyserRef.current = analyser;
-      setTesting(true);
-
-      const freqData = new Uint8Array(analyser.frequencyBinCount);
-      const timeData = new Uint8Array(analyser.fftSize);
-      smoothedBarsRef.current = [0, 0, 0, 0, 0, 0, 0];
-
-      const binSize = audioContext.sampleRate / analyser.fftSize;
-      const voiceStartBin = Math.floor(60 / binSize);
-      const voiceEndBin = Math.floor(8000 / binSize);
-
-      const tick = () => {
-        analyser.getByteFrequencyData(freqData);
-        analyser.getByteTimeDomainData(timeData);
-
-        let rmsSum = 0;
-        for (let i = 0; i < timeData.length; i++) {
-          const v = (timeData[i] - 128) / 128;
-          rmsSum += v * v;
-        }
-        const rms = Math.sqrt(rmsSum / timeData.length);
-        const volume = Math.min(1, rms * 8);
-
-        let totalFreq = 0;
-        let freqCount = 0;
-        for (let i = voiceStartBin; i < voiceEndBin && i < freqData.length; i++) {
-          totalFreq += freqData[i];
-          freqCount++;
-        }
-        const avgFreq = freqCount > 0 ? totalFreq / freqCount : 0;
-        const freqLevel = Math.min(1, avgFreq / 100);
-
-        const overallLevel = Math.max(volume, freqLevel);
-
-        const newBars: number[] = [];
-        for (let i = 0; i < BAR_COUNT; i++) {
-          const variation = 0.9 + Math.random() * 0.2;
-          const raw = Math.min(1, overallLevel * variation);
-          const prev = smoothedBarsRef.current[i];
-          const next = raw > prev
-            ? prev + (raw - prev) * 0.75
-            : prev + (raw - prev) * 0.2;
-          smoothedBarsRef.current[i] = Math.max(0, next);
-          newBars.push(smoothedBarsRef.current[i]);
-        }
-
-        setBars([...newBars]);
-        animFrameRef.current = requestAnimationFrame(tick);
-      };
-      tick();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Microphone access denied');
-      stopTesting();
-    }
-  };
-
-  useEffect(() => {
-    return () => stopTesting();
-  }, []);
-
-  return (
-    <div className="flex items-center gap-3">
-      <button
-        type="button"
-        onClick={testing ? stopTesting : startTesting}
-        className={`flex h-8 items-center gap-1.5 rounded-md px-5 text-sm font-medium transition-all ${
-          testing ? 'bg-destructive/10 text-destructive' : 'bg-white/80 text-foreground hover:bg-white'
-        }`}
-      >
-        <Mic size={13} />
-        {testing ? 'Stop test' : 'Test mic'}
-      </button>
-
-      {testing && (
-        <div className="flex-1">
-          <div className="flex h-12 items-end justify-center gap-[3px] rounded-lg bg-white px-4 py-2.5">
-            {bars.map((value, i) => {
-              const height = Math.max(3, value * 34);
-              const hue = value > 0.7 ? 'from-red-500 to-orange-400' : value > 0.4 ? 'from-yellow-500 to-green-400' : 'from-green-500 to-green-400';
-              return (
-                <div key={i} className={`w-[6px] rounded-full bg-gradient-to-t ${hue}`} style={{ height: `${height}px`, opacity: 0.25 + value * 0.75 }} />
-              );
-            })}
-          </div>
-          <p className="mt-1 text-center text-[14px] text-muted-foreground">Listening...</p>
-        </div>
-      )}
-
-      {error && <p className="text-[14px] font-medium text-destructive">{error}</p>}
-    </div>
-  );
-}
-
 function HotkeyTokens({ label, subdued = false }: { label: string; subdued?: boolean }) {
   const parts = label.split(' + ').filter(Boolean);
 
@@ -2147,11 +1961,11 @@ function HotkeyTokens({ label, subdued = false }: { label: string; subdued?: boo
   }
 
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-1">
       {parts.map((part, index) => (
         <span
           key={`${part}-${index}`}
-          className={`settings-hotkey-chip inline-flex min-h-[34px] min-w-[56px] items-center justify-center px-4 py-1.5 text-[13px] font-semibold ${
+          className={`settings-hotkey-chip inline-flex min-h-[28px] min-w-0 items-center justify-center px-2 py-0.5 text-[14px] font-normal ${
             subdued
               ? 'opacity-70 text-muted-foreground'
               : 'text-foreground'

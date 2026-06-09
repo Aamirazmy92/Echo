@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { AppState, AppTab, DictionaryItemInput, DictationEntry, Settings, SnippetInput, SpeechMetrics } from '../shared/types';
+import { AppState, AppTab, DictionaryItemInput, DictationEntry, Note, NoteInput, Settings, SnippetInput, SpeechMetrics } from '../shared/types';
 
 type UpdateStatusPayload = {
   state: 'unsupported' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
@@ -19,12 +19,14 @@ contextBridge.exposeInMainWorld('api', {
   getInitialTheme: () => initialTheme,
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
+  refreshTrayMenu: () => ipcRenderer.invoke('refresh-tray-menu'),
   saveSettings: (s: Partial<Settings>) => ipcRenderer.invoke('save-settings', s),
   suspendHotkey: () => ipcRenderer.invoke('suspend-hotkey'),
   cancelRecordingStart: () => ipcRenderer.invoke('cancel-recording-start'),
   cancelDictation: () => ipcRenderer.invoke('cancel-dictation'),
   resumeHotkey: () => ipcRenderer.invoke('resume-hotkey'),
   getDashboardData: (limit = 50, offset = 0) => ipcRenderer.invoke('get-dashboard-data', limit, offset),
+  basicUsageGet: () => ipcRenderer.invoke('basic-usage-get'),
   getHistory: (limit: number, offset: number) => ipcRenderer.invoke('get-history', limit, offset),
   exportHistory: (format: 'csv' | 'json') => ipcRenderer.invoke('export-history', format),
   updateHistoryEntry: (id: number, text: string) => ipcRenderer.invoke('update-history-entry', id, text),
@@ -37,11 +39,22 @@ contextBridge.exposeInMainWorld('api', {
   getSnippets: () => ipcRenderer.invoke('get-snippets'),
   saveSnippet: (s: SnippetInput) => ipcRenderer.invoke('save-snippet', s),
   deleteSnippet: (id: number) => ipcRenderer.invoke('delete-snippet', id),
+  getNotes: () => ipcRenderer.invoke('get-notes'),
+  saveNote: (note: NoteInput) => ipcRenderer.invoke('save-note', note),
+  deleteNote: (id: number) => ipcRenderer.invoke('delete-note', id),
+  toggleNotePin: (id: number, pinned: boolean) => ipcRenderer.invoke('toggle-note-pin', id, pinned),
+  openStickyNoteWindow: (noteId?: number, options?: { x?: number; y?: number }) =>
+    ipcRenderer.invoke('open-sticky-note-window', noteId, options),
+  createNewStickyNoteWindow: (
+    note?: number | { noteId?: number; title: string; body: string },
+    options?: { x?: number; y?: number },
+  ) => ipcRenderer.invoke('create-new-sticky-note-window', note, options),
+  attachNoteToStickyWindow: (
+    note: { noteId?: number; title: string; body: string },
+    point: { x: number; y: number },
+  ) => ipcRenderer.invoke('attach-note-to-sticky-window', note, point),
   getStats: () => ipcRenderer.invoke('get-stats'),
   getCurrentApp: () => ipcRenderer.invoke('get-current-app'),
-  openApiKeyPage: () => ipcRenderer.send('open-api-key-page'),
-  testGroqApiKey: (key: string) => ipcRenderer.invoke('test-groq-api-key', key),
-  testSavedGroqApiKey: () => ipcRenderer.invoke('test-saved-groq-api-key'),
 
   transcribeAudio: (buffer: ArrayBuffer, duration: number, speechMetrics?: SpeechMetrics) =>
     ipcRenderer.invoke('transcribe-audio', buffer, duration, speechMetrics),
@@ -66,6 +79,11 @@ contextBridge.exposeInMainWorld('api', {
     const fn = (_: unknown, entry: DictationEntry | null) => cb(entry);
     ipcRenderer.on('transcription-result', fn);
     return () => ipcRenderer.removeListener('transcription-result', fn);
+  },
+  onBasicUsageLimitReached: (cb: (payload: unknown) => void) => {
+    const fn = (_: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on('basic-usage-limit-reached', fn);
+    return () => ipcRenderer.removeListener('basic-usage-limit-reached', fn);
   },
   onError: (cb: (msg: string) => void) => {
     const fn = (_: unknown, msg: string) => cb(msg);
@@ -97,7 +115,37 @@ contextBridge.exposeInMainWorld('api', {
   windowMinimize: () => ipcRenderer.send('window-minimize'),
   windowToggleMaximize: () => ipcRenderer.send('window-toggle-maximize'),
   windowClose: () => ipcRenderer.send('window-close'),
+  closeCurrentWindow: () => ipcRenderer.send('close-current-window'),
+  forceCloseCurrentWindow: () => ipcRenderer.send('force-close-current-window'),
+  toggleCurrentWindowMaximize: () => ipcRenderer.send('toggle-current-window-maximize'),
+  expandCurrentWindowForWriting: () => ipcRenderer.send('expand-current-window-for-writing'),
+  onNotesUpdated: (cb: () => void) => {
+    const fn = () => cb();
+    ipcRenderer.on('notes-updated', fn);
+    return () => ipcRenderer.removeListener('notes-updated', fn);
+  },
+  onOpenNoteInSticky: (cb: (note: Note) => void) => {
+    const fn = (_: unknown, note: Note) => cb(note);
+    ipcRenderer.on('open-note-in-sticky', fn);
+    return () => ipcRenderer.removeListener('open-note-in-sticky', fn);
+  },
+  onNewBlankTabInSticky: (cb: () => void) => {
+    const fn = () => cb();
+    ipcRenderer.on('new-blank-tab-in-sticky', fn);
+    return () => ipcRenderer.removeListener('new-blank-tab-in-sticky', fn);
+  },
+  onAttachNoteInSticky: (
+    cb: (note: { noteId?: number; title: string; body: string; keepAsNewTab?: boolean }) => void,
+  ) => {
+    const fn = (
+      _: unknown,
+      note: { noteId?: number; title: string; body: string; keepAsNewTab?: boolean },
+    ) => cb(note);
+    ipcRenderer.on('attach-note-in-sticky', fn);
+    return () => ipcRenderer.removeListener('attach-note-in-sticky', fn);
+  },
   writeClipboardText: (text: string) => ipcRenderer.invoke('clipboard-write-text', text),
+  openExternalUrl: (url: string) => ipcRenderer.invoke('open-external-url', url),
 
   reportRendererError: (scope: string, message: string, stack?: string) =>
     ipcRenderer.send('report-renderer-error', { scope, message, stack }),
@@ -117,10 +165,6 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('model-download-progress', fn);
     return () => ipcRenderer.removeListener('model-download-progress', fn);
   },
-  hasGroqApiKey: () => ipcRenderer.invoke('has-groq-api-key'),
-  isSecureStorageAvailable: () => ipcRenderer.invoke('is-secure-storage-available'),
-  setGroqApiKey: (key: string) => ipcRenderer.invoke('set-groq-api-key', key),
-  clearGroqApiKey: () => ipcRenderer.invoke('clear-groq-api-key'),
 
   // ─────────── Auth (Supabase-backed) ───────────
   authConfigStatus: () => ipcRenderer.invoke('auth-config-status'),
@@ -133,6 +177,8 @@ contextBridge.exposeInMainWorld('api', {
   authGoogleSignIn: () => ipcRenderer.invoke('auth-google-sign-in'),
   authDeleteAccount: () => ipcRenderer.invoke('auth-delete-account'),
   authUpdateDisplayName: (name: string) => ipcRenderer.invoke('auth-update-display-name', name),
+  authUpdateProfilePicture: (profilePictureDataUrl: string | null) =>
+    ipcRenderer.invoke('auth-update-profile-picture', profilePictureDataUrl),
   onAuthState: (cb: (session: unknown | null) => void) => {
     const fn = (_: unknown, session: unknown | null) => cb(session);
     ipcRenderer.on('auth-state', fn);
@@ -146,5 +192,23 @@ contextBridge.exposeInMainWorld('api', {
     const fn = (_: unknown, payload: unknown) => cb(payload);
     ipcRenderer.on('sync-status', fn);
     return () => ipcRenderer.removeListener('sync-status', fn);
+  },
+
+  // ─────────── Billing / entitlements ───────────
+  billingConfigStatus: () => ipcRenderer.invoke('billing-config-status'),
+  entitlementsGet: () => ipcRenderer.invoke('entitlements-get'),
+  entitlementsRefresh: () => ipcRenderer.invoke('entitlements-refresh'),
+  billingStartCheckout: (plan: 'pro_monthly' | 'pro_yearly') =>
+    ipcRenderer.invoke('billing-start-checkout', plan),
+  billingOpenPortal: () => ipcRenderer.invoke('billing-open-portal'),
+  onEntitlementsChanged: (cb: (ent: unknown) => void) => {
+    const fn = (_: unknown, ent: unknown) => cb(ent);
+    ipcRenderer.on('entitlements-changed', fn);
+    return () => ipcRenderer.removeListener('entitlements-changed', fn);
+  },
+  onBillingDeepLink: (cb: (url: string) => void) => {
+    const fn = (_: unknown, url: string) => cb(url);
+    ipcRenderer.on('billing-deep-link', fn);
+    return () => ipcRenderer.removeListener('billing-deep-link', fn);
   },
 });

@@ -68,8 +68,13 @@ export default function ToastItem({ id, type, message, duration, onDismiss }: To
 
   // Bare-stroke icon set, sized 18 px with stroke-width 2.5 — matches the
   // visual weight of the reference screenshot.
+  // Bare-stroke icon set, sized 18 px with stroke-width 2.5.
   const iconColor =
-    type === 'success' ? '#34d399' : type === 'error' ? '#f87171' : '#d4d4d8';
+    type === 'success'
+      ? '#788C5D' // Claude Moss Green
+      : type === 'error'
+      ? '#D97757' // Claude Terracotta
+      : '#6C6B65'; // Claude Slate Ink
   const Icon = type === 'success' ? Check : type === 'error' ? X : Info;
 
   // Spring transitions copied from `ui/dialog.tsx` so the toast pop
@@ -99,13 +104,11 @@ export default function ToastItem({ id, type, message, duration, onDismiss }: To
       exit={exit}
       onHoverStart={() => setIsHovered(true)}
       onHoverEnd={() => setIsHovered(false)}
-      className="pointer-events-auto inline-flex max-w-[360px] items-center gap-2.5 rounded-[14px] px-4 py-2.5 shadow-2xl"
+      className="pointer-events-auto inline-flex max-w-[360px] items-center gap-2.5 rounded-[14px] border px-4 py-2.5"
       style={{
-        background: 'hsl(220 8% 8%)',
-        // Subtle inner highlight on the top edge gives the card depth on
-        // dark backdrops without showing a hard border.
-        boxShadow:
-          '0 18px 38px -12px rgba(0, 0, 0, 0.55), 0 8px 16px -8px rgba(0, 0, 0, 0.35), inset 0 1px 0 0 rgba(255, 255, 255, 0.06)',
+        background: 'var(--toast-bg, #FAF9F6)',
+        borderColor: 'var(--toast-border, rgba(20, 20, 19, 0.10))',
+        boxShadow: 'var(--toast-shadow, 0 12px 32px -8px rgba(20, 20, 19, 0.12))',
       }}
       role={type === 'error' ? 'alert' : 'status'}
       aria-live={type === 'error' ? 'assertive' : 'polite'}
@@ -117,7 +120,7 @@ export default function ToastItem({ id, type, message, duration, onDismiss }: To
         className="shrink-0"
         aria-hidden="true"
       />
-      <p className="text-[14px] font-medium leading-tight text-white line-clamp-2">
+      <p className="text-[14px] font-medium leading-tight text-[var(--text-primary,#141413)] line-clamp-2">
         {message}
       </p>
     </motion.div>

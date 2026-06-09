@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, session, shell, screen, crashReporter, clipboard } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, session, shell, screen, crashReporter, clipboard, type Rectangle } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import {
@@ -9,8 +9,8 @@ import {
   getUpdateStatus,
   broadcastUpdateStatusTo,
 } from './updater';
-import type { DictionaryItemInput, Settings, SnippetInput, SpeechMetrics } from '../shared/types';
-import { initStore, getSettings, saveSettings, hasGroqApiKey, setGroqApiKey, clearGroqApiKey, isSecureStorageAvailable, getGroqApiKeyPlain } from './store';
+import type { DictionaryItemInput, Note, Settings, SnippetInput, SpeechMetrics } from '../shared/types';
+import { initStore, getSettings, saveSettings } from './store';
 import { installGlobalErrorHandlers, logError, logInfo, logWarn } from './logger';
 import {
   initAuth,
@@ -25,8 +25,21 @@ import {
   onAuthStateChange,
   deleteAccount,
   updateDisplayName,
+  updateProfilePicture,
 } from './auth';
 import { initSync, forceSync, getSyncStatus, syncOnFocus } from './sync';
+import {
+  initEntitlements,
+  refreshEntitlements,
+  refreshAfterBillingReturn,
+  getEntitlementsSnapshot,
+} from './entitlements';
+import {
+  startCheckout as cloudStartCheckout,
+  openCustomerPortal as cloudOpenCustomerPortal,
+  CloudHttpError,
+  isCloudConfigured,
+} from './cloud';
 import { createTray, refreshTrayMenu, updateTrayState } from './tray';
 import { registerHotkeys, getActiveAppName, prewarmActiveAppDetection, refreshActiveAppName, resetHotkeyState, suspendHotkey, unregisterAll as unregisterAllHotkeys } from './hotkey';
 import { applyDictionary } from './dictionary';
@@ -42,8 +55,8 @@ import {
   sanitizeEntryId,
   sanitizeEntryIds,
   sanitizeExportFormat,
-  sanitizeGroqApiKey,
   sanitizeHistoryText,
+  sanitizeNoteInputPayload,
   sanitizePagination,
   sanitizeSettingsUpdate,
   sanitizeSnippetInputPayload,
@@ -109,6 +122,12 @@ async function cleanupLegacyChromiumCaches() {
 }
 
 let mainWindow: BrowserWindow | null = null;
+const stickyNoteWindows = new Set<BrowserWindow>();
+// Sticky windows ordered by stacking (most-recently-focused / topmost first).
+// Used to resolve which overlapping window receives a torn-out tab on drop.
+const stickyNoteFocusOrder: BrowserWindow[] = [];
+const expandedStickyNoteWindows = new WeakSet<BrowserWindow>();
+let warmStickyNoteWindow: BrowserWindow | null = null;
 let isQuitting = false;
 let lastInjectedFingerprint = '';
 let lastInjectedAt = 0;
@@ -121,28 +140,6 @@ let historyInitialized = false;
 
 let transcribeModulePromise: Promise<typeof import('./transcribe')> | null = null;
 let cleanupModulePromise: Promise<typeof import('./cleanup')> | null = null;
-
-async function verifyGroqApiKey(key: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
-  try {
-    const response = await fetch('https://api.groq.com/openai/v1/models', {
-      headers: {
-        Authorization: `Bearer ${sanitizeGroqApiKey(key)}`,
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      return { ok: false as const, error: errorText || `Groq API key check failed with HTTP ${response.status}` };
-    }
-    return { ok: true as const };
-  } catch (err: unknown) {
-    return { ok: false as const, error: err instanceof Error ? err.message : 'Unknown error' };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
 
 function getTranscribeModule() {
   if (!transcribeModulePromise) {
@@ -247,6 +244,10 @@ function startDeferredStartupTasks() {
   }, 600);
 
   setTimeout(() => {
+    prepareWarmStickyNoteWindow();
+  }, 650);
+
+  setTimeout(() => {
     void getTranscribeModule();
     void getCleanupModule();
   }, 900);
@@ -298,6 +299,81 @@ function shouldSuppressDuplicateTranscript(text: string): boolean {
   lastInjectedFingerprint = fingerprint;
   lastInjectedAt = now;
   return isDuplicate;
+}
+
+const BASIC_WEEKLY_WORD_CAP = 2000;
+
+type BasicUsageSnapshot = {
+  tier: 'anonymous' | 'free' | 'pro';
+  used: number;
+  cap: number;
+  remaining: number;
+  exhausted: boolean;
+};
+
+type BasicUsageLimitPayload = BasicUsageSnapshot & {
+  message: string;
+};
+
+function getStartOfWeek(date: Date): Date {
+  const start = new Date(date);
+  const day = start.getDay();
+  const daysSinceMonday = (day + 6) % 7;
+  start.setDate(start.getDate() - daysSinceMonday);
+  start.setHours(0, 0, 0, 0);
+  return start;
+}
+
+function countWordsThisWeek(entries: Array<{ wordCount: number; createdAt: string }>): number {
+  const weekStart = getStartOfWeek(new Date());
+  return entries.reduce((total, entry) => {
+    const createdAt = new Date(entry.createdAt);
+    if (Number.isNaN(createdAt.getTime()) || createdAt < weekStart) return total;
+    return total + entry.wordCount;
+  }, 0);
+}
+
+function getBasicUsageSnapshot(entries: Array<{ wordCount: number; createdAt: string }>): BasicUsageSnapshot {
+  const tier = getEntitlementsSnapshot().tier;
+  const used = countWordsThisWeek(entries);
+  const remaining = Math.max(0, BASIC_WEEKLY_WORD_CAP - used);
+  return {
+    tier,
+    used,
+    cap: BASIC_WEEKLY_WORD_CAP,
+    remaining,
+    exhausted: tier !== 'pro' && used >= BASIC_WEEKLY_WORD_CAP,
+  };
+}
+
+function getBasicUsageLimitMessage(remainingWords: number): string {
+  if (remainingWords > 0) {
+    return `Basic includes ${BASIC_WEEKLY_WORD_CAP.toLocaleString()} dictated words per week. You have ${remainingWords.toLocaleString()} left this week. Upgrade to Pro for more.`;
+  }
+  return `You've used all ${BASIC_WEEKLY_WORD_CAP.toLocaleString()} Basic words for this week. Upgrade to Pro for more.`;
+}
+
+function notifyBasicUsageLimitReached(snapshot: BasicUsageSnapshot): void {
+  mainWindow?.webContents.send('basic-usage-limit-reached', {
+    ...snapshot,
+    message: getBasicUsageLimitMessage(snapshot.remaining),
+  } satisfies BasicUsageLimitPayload);
+}
+
+async function getBasicUsageSnapshotForGate(
+  entries: Array<{ wordCount: number; createdAt: string }>
+): Promise<BasicUsageSnapshot> {
+  let snapshot = getBasicUsageSnapshot(entries);
+  if (!snapshot.exhausted) return snapshot;
+
+  try {
+    await refreshEntitlements();
+  } catch (err) {
+    logWarn('usage-limit', 'Entitlements refresh failed before Basic usage gate', err);
+  }
+
+  snapshot = getBasicUsageSnapshot(entries);
+  return snapshot;
 }
 
 /**
@@ -430,6 +506,9 @@ function registerAllIpcs() {
   // Handle IPCs
   ipcMain.handle('get-app-version', () => app.getVersion());
   ipcMain.handle('get-settings', () => getSettings());
+  ipcMain.handle('refresh-tray-menu', () => {
+    void refreshTrayMenu();
+  });
   ipcMain.on('get-initial-theme', (event) => {
     event.returnValue = 'light';
   });
@@ -505,6 +584,10 @@ function registerAllIpcs() {
       history: history.getEntries(paging.limit, paging.offset),
     };
   });
+  ipcMain.handle('basic-usage-get', async () => {
+    const history = await ensureHistoryModule();
+    return getBasicUsageSnapshotForGate(history.getAllEntries());
+  });
   ipcMain.handle('export-history', async (_, format: 'csv' | 'json') => {
     const history = await ensureHistoryModule();
     const entries = history.getAllEntries();
@@ -559,38 +642,55 @@ function registerAllIpcs() {
     const history = await ensureHistoryModule();
     return history.deleteSnippet(sanitizeEntryId(id));
   });
+  ipcMain.handle('get-notes', async () => {
+    const history = await ensureHistoryModule();
+    return history.getNotes();
+  });
+  ipcMain.handle('open-sticky-note-window', async (_, noteId?: number, options?: unknown) => {
+    await openStickyNoteWindow(noteId, options);
+  });
+  ipcMain.handle('create-new-sticky-note-window', async (_, noteArg?: unknown, options?: unknown) => {
+    await openStickyNoteWindow(noteArg, options, { forceNew: true });
+  });
+  ipcMain.handle('attach-note-to-sticky-window', async (event, payload: unknown, point: unknown) => {
+    const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+    const parsedPayload = sanitizeStickyNoteAttachPayload(payload);
+    const parsedPoint = sanitizeStickyNoteDropPoint(point);
+    if (!sourceWindow || !parsedPoint) return false;
+
+    const targetWindow = findStickyNoteWindowAtPoint(parsedPoint, sourceWindow);
+    if (!targetWindow) return false;
+
+    targetWindow.webContents.send('attach-note-in-sticky', { ...parsedPayload, keepAsNewTab: true });
+    if (targetWindow.isMinimized()) targetWindow.restore();
+    targetWindow.show();
+    targetWindow.moveTop();
+    targetWindow.focus();
+    return true;
+  });
+  ipcMain.handle('save-note', async (_, note: unknown) => {
+    const history = await ensureHistoryModule();
+    const result = history.saveNote(sanitizeNoteInputPayload(note));
+    broadcastNotesUpdated();
+    return result;
+  });
+  ipcMain.handle('toggle-note-pin', async (_, id: number, pinned: boolean) => {
+    const history = await ensureHistoryModule();
+    const result = history.toggleNotePin(sanitizeEntryId(id), pinned);
+    broadcastNotesUpdated();
+    return result;
+  });
+  ipcMain.handle('delete-note', async (_, id: number) => {
+    const history = await ensureHistoryModule();
+    const result = history.deleteNote(sanitizeEntryId(id));
+    broadcastNotesUpdated();
+    return result;
+  });
   ipcMain.handle('get-stats', async () => {
     const history = await ensureHistoryModule();
     return history.getStats();
   });
   ipcMain.handle('get-current-app', async () => refreshActiveAppName());
-  ipcMain.on('open-api-key-page', () => {
-    shell.openExternal('https://console.groq.com/keys');
-  });
-  ipcMain.handle('test-groq-api-key', async (_, key: string) => verifyGroqApiKey(key));
-  ipcMain.handle('test-saved-groq-api-key', async () => {
-    const savedKey = getGroqApiKeyPlain();
-    if (!savedKey) {
-      return { ok: false as const, error: 'No saved API key.' };
-    }
-
-    return verifyGroqApiKey(savedKey);
-  });
-  ipcMain.handle('has-groq-api-key', () => hasGroqApiKey());
-  ipcMain.handle('is-secure-storage-available', () => isSecureStorageAvailable());
-  ipcMain.handle('set-groq-api-key', (_, key: string) => {
-    if (!isSecureStorageAvailable()) {
-      throw new Error(
-        'Secure storage is unavailable on this system, so Echo cannot save the Groq API key. Please unlock the OS keychain and try again.'
-      );
-    }
-    setGroqApiKey(sanitizeGroqApiKey(key));
-    return getSettings();
-  });
-  ipcMain.handle('clear-groq-api-key', () => {
-    clearGroqApiKey();
-    return getSettings();
-  });
 
   // ─────────────────────── Auth / cloud sync ──────────────────────────
   // The renderer's <AuthGate> calls these. All return plain shapes
@@ -609,9 +709,44 @@ function registerAllIpcs() {
   ipcMain.handle('auth-google-sign-in', () => startGoogleSignIn());
   ipcMain.handle('auth-delete-account', () => deleteAccount());
   ipcMain.handle('auth-update-display-name', (_e, name: string) => updateDisplayName(name));
+  ipcMain.handle('auth-update-profile-picture', (_e, profilePictureDataUrl: string | null) =>
+    updateProfilePicture(profilePictureDataUrl)
+  );
 
   ipcMain.handle('sync-get-status', () => getSyncStatus());
   ipcMain.handle('sync-force', () => forceSync());
+
+  // ─────────────────────── Billing / entitlements ─────────────────────
+  ipcMain.handle('billing-config-status', () => ({ configured: isCloudConfigured() }));
+  ipcMain.handle('entitlements-get', () => getEntitlementsSnapshot());
+  ipcMain.handle('entitlements-refresh', () => refreshEntitlements());
+  ipcMain.handle('billing-start-checkout', async (_e, plan: 'pro_monthly' | 'pro_yearly') => {
+    if (plan !== 'pro_monthly' && plan !== 'pro_yearly') {
+      return { error: 'invalid_plan' };
+    }
+    try {
+      const url = await cloudStartCheckout(plan);
+      await shell.openExternal(url);
+      return { ok: true as const };
+    } catch (err) {
+      logWarn('billing', 'start-checkout failed', err);
+      const code = err instanceof CloudHttpError ? err.code : 'internal_error';
+      const message = err instanceof Error ? err.message : 'Could not open checkout.';
+      return { ok: false as const, code, error: message };
+    }
+  });
+  ipcMain.handle('billing-open-portal', async () => {
+    try {
+      const url = await cloudOpenCustomerPortal();
+      await shell.openExternal(url);
+      return { ok: true as const };
+    } catch (err) {
+      logWarn('billing', 'open-portal failed', err);
+      const code = err instanceof CloudHttpError ? err.code : 'internal_error';
+      const message = err instanceof Error ? err.message : 'Could not open portal.';
+      return { ok: false as const, code, error: message };
+    }
+  });
 
   // Auto-update IPC. The renderer drives the "Download" / "Restart"
   // buttons; the state itself is pushed proactively over the
@@ -640,7 +775,6 @@ function registerAllIpcs() {
       updateTrayState('processing');
       updateOverlayState('processing');
       const settings = getSettings();
-      const groqApiKey = getGroqApiKeyPlain();
 
       // Kick off every downstream dependency in parallel with transcription.
       // The cleanup module, history store (SQLite open), and SendInput helper
@@ -651,16 +785,31 @@ function registerAllIpcs() {
       // plus the Groq cleanup round-trip.
       const historyModulePromise = ensureHistoryModule();
       const cleanupModulePromise = getCleanupModule();
+      const transcribeModulePromise = getTranscribeModule();
       void prewarmInjectHelper().catch(() => { /* logged via waiter */ });
 
-      const { transcribeAudio } = await getTranscribeModule();
+      const history = await historyModulePromise;
+      const currentBasicUsage = await getBasicUsageSnapshotForGate(history.getAllEntries());
+      if (currentBasicUsage.exhausted) {
+        updateTrayState('idle');
+        updateOverlayState('error');
+        resetHotkeyState(false);
+        notifyBasicUsageLimitReached(currentBasicUsage);
+        setTimeout(() => {
+          updateTrayState('idle');
+          updateOverlayState('idle');
+        }, 1800);
+        return;
+      }
+
+      const { transcribeAudio } = await transcribeModulePromise;
 
       // Retrieve the app name that was captured when recording started
       const appName = getActiveAppName();
 
       // Only await the transcription itself so it returns instantly
       const result = await withTimeout(
-        transcribeAudio(sanitizedAudioBuffer, settings, sanitizedDurationMs, sanitizedSpeechMetrics, groqApiKey),
+        transcribeAudio(sanitizedAudioBuffer, settings, sanitizedDurationMs, sanitizedSpeechMetrics),
         TRANSCRIPTION_TIMEOUT_MS,
         'Transcription'
       );
@@ -691,17 +840,13 @@ function registerAllIpcs() {
       const toneId = resolvedStyle.toneId;
       const cleanupModule = await cleanupModulePromise;
       const cleaned = await withTimeout(
-        cleanupModule.cleanupText(rawText, toneId, settings, result.detectedLanguage, groqApiKey),
+        cleanupModule.cleanupText(rawText, toneId, settings, result.detectedLanguage),
         CLEANUP_TIMEOUT_MS,
         'Cleanup'
       );
       if (isCancelled()) {
         return;
       }
-      // History load is overlapped with transcription + cleanup above, so
-      // this await is effectively free on any dictation after the first.
-      const history = await historyModulePromise;
-      
       const dictionaryApplied = applyDictionary(cleaned, history.getDictionaryItems());
       const finalText = expandSnippets(dictionaryApplied, history.getSnippets());
       if (isCancelled()) {
@@ -729,12 +874,31 @@ function registerAllIpcs() {
         return;
       }
 
-      await injectText(finalText);
+      const wordCount = finalText.split(/\s+/).filter(w => w.length > 0).length;
+      // Reuse the usage snapshot taken before transcription. No history rows
+      // are written until after injection (`addEntry` below), so `used` is
+      // still current here. Re-scanning the whole dictations table at this
+      // point only adds latency to the instant the user is waiting for the
+      // paste to land.
+      if (currentBasicUsage.tier !== 'pro') {
+        if (currentBasicUsage.used + wordCount > BASIC_WEEKLY_WORD_CAP) {
+          updateTrayState('idle');
+          updateOverlayState('error');
+          resetHotkeyState(false);
+          notifyBasicUsageLimitReached(currentBasicUsage);
+          setTimeout(() => {
+            updateTrayState('idle');
+            updateOverlayState('idle');
+          }, 1800);
+          return;
+        }
+      }
+
+      await injectText(finalText, appName);
       if (isCancelled()) {
         return;
       }
 
-      const wordCount = finalText.split(/\s+/).filter(w => w.length > 0).length;
       const entry = history.addEntry({
         text: finalText,
         rawText,
@@ -810,12 +974,44 @@ function registerAllIpcs() {
   ipcMain.on('window-close', () => {
     mainWindow?.hide();
   });
+  ipcMain.on('close-current-window', (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    target?.close();
+  });
+
+  ipcMain.on('force-close-current-window', (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (!target || target.isDestroyed()) return;
+    target.destroy();
+  });
+
+  ipcMain.on('toggle-current-window-maximize', (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (!target) return;
+    expandWindowForWriting(target);
+  });
+
+  ipcMain.on('expand-current-window-for-writing', (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (!target) return;
+    expandWindowForWriting(target);
+  });
 
   ipcMain.handle('clipboard-write-text', (_, text: unknown) => {
     if (typeof text !== 'string') {
       throw new Error('Clipboard text must be a string.');
     }
     clipboard.writeText(text);
+  });
+  ipcMain.handle('open-external-url', async (_, url: unknown) => {
+    if (typeof url !== 'string') {
+      throw new Error('External URL must be a string.');
+    }
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('Only http and https links can be opened.');
+    }
+    await shell.openExternal(parsed.toString());
   });
 
   // Renderer-side errors flow into the same log file as main-process
@@ -860,8 +1056,15 @@ function registerWindowSecurityHandlers(window: BrowserWindow) {
   const allowedFilePrefix = `file://${path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/`).replace(/\\/g, '/')}`;
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (ALLOWED_EXTERNAL_URLS.has(url)) {
-      void shell.openExternal(url);
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        void shell.openExternal(parsed.toString());
+      }
+    } catch {
+      if (ALLOWED_EXTERNAL_URLS.has(url)) {
+        void shell.openExternal(url);
+      }
     }
 
     return { action: 'deny' };
@@ -890,6 +1093,387 @@ function registerWindowSecurityHandlers(window: BrowserWindow) {
   });
 }
 
+function broadcastNotesUpdated(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      try {
+        win.webContents.send('notes-updated');
+      } catch {
+        // ignore — window may be torn down mid-send
+      }
+    }
+  }
+}
+
+type StickyNoteWindowOptions = {
+  x?: number;
+  y?: number;
+};
+
+type StickyNoteAttachPayload = {
+  noteId?: number;
+  title: string;
+  body: string;
+  // When true the receiving window keeps this as its own tab instead of
+  // merging it into a blank placeholder tab (used when re-attaching a tab the
+  // user dragged from another window).
+  keepAsNewTab?: boolean;
+};
+
+const STICKY_NOTE_WINDOW_WIDTH = 620;
+const STICKY_NOTE_WINDOW_HEIGHT = 500;
+const STICKY_NOTE_EXPANDED_WIDTH = 1040;
+const STICKY_NOTE_EXPANDED_HEIGHT = 720;
+function expandWindowForWriting(target: BrowserWindow) {
+  if (target.isDestroyed()) return;
+
+  if (target.isMaximized()) target.unmaximize();
+  const current = target.getBounds();
+  const area = screen.getDisplayMatching(current).workArea;
+  const isExpanded = expandedStickyNoteWindows.has(target);
+  const width = Math.min(isExpanded ? STICKY_NOTE_WINDOW_WIDTH : STICKY_NOTE_EXPANDED_WIDTH, area.width);
+  const height = Math.min(isExpanded ? STICKY_NOTE_WINDOW_HEIGHT : STICKY_NOTE_EXPANDED_HEIGHT, area.height);
+  const x = Math.round(area.x + (area.width - width) / 2);
+  const y = Math.round(area.y + (area.height - height) / 2);
+  target.setBounds({ x, y, width, height }, true);
+  if (isExpanded) {
+    expandedStickyNoteWindows.delete(target);
+  } else {
+    expandedStickyNoteWindows.add(target);
+  }
+}
+
+function sanitizeStickyNoteWindowOptions(options: unknown): StickyNoteWindowOptions | undefined {
+  if (!options || typeof options !== 'object') return undefined;
+  const candidate = options as Record<string, unknown>;
+  const x = typeof candidate.x === 'number' && Number.isFinite(candidate.x) ? candidate.x : undefined;
+  const y = typeof candidate.y === 'number' && Number.isFinite(candidate.y) ? candidate.y : undefined;
+  if (x === undefined && y === undefined) return undefined;
+  return { x, y };
+}
+
+function resolveStickyNoteWindowPosition(options: StickyNoteWindowOptions | undefined): { x: number; y: number } {
+  const parentBounds = mainWindow?.getBounds();
+  const offset = stickyNoteWindows.size * 28;
+  const fallbackX = (parentBounds?.x ?? 160) + 80 + offset;
+  const fallbackY = (parentBounds?.y ?? 120) + 80 + offset;
+  const rawX = Math.round(options?.x ?? fallbackX);
+  const rawY = Math.round(options?.y ?? fallbackY);
+  const display = screen.getDisplayNearestPoint({ x: rawX, y: rawY });
+  const area = display.workArea;
+  const maxX = Math.max(area.x, area.x + area.width - STICKY_NOTE_WINDOW_WIDTH);
+  const maxY = Math.max(area.y, area.y + area.height - STICKY_NOTE_WINDOW_HEIGHT);
+  return {
+    x: Math.min(Math.max(rawX, area.x), maxX),
+    y: Math.min(Math.max(rawY, area.y), maxY),
+  };
+}
+
+function sanitizeStickyNoteAttachPayload(payload: unknown): StickyNoteAttachPayload {
+  const candidate = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  const noteId = typeof candidate.noteId === 'number' && Number.isFinite(candidate.noteId)
+    ? Math.trunc(candidate.noteId)
+    : undefined;
+  const title = typeof candidate.title === 'string' ? candidate.title.slice(0, 200) : 'Untitled';
+  const body = typeof candidate.body === 'string' ? candidate.body : '';
+  return {
+    noteId,
+    title: title.trim() || 'Untitled',
+    body,
+  };
+}
+
+function sanitizeStickyNoteDropPoint(point: unknown): { x: number; y: number } | null {
+  if (!point || typeof point !== 'object') return null;
+  const candidate = point as Record<string, unknown>;
+  const x = typeof candidate.x === 'number' && Number.isFinite(candidate.x) ? Math.round(candidate.x) : null;
+  const y = typeof candidate.y === 'number' && Number.isFinite(candidate.y) ? Math.round(candidate.y) : null;
+  return x === null || y === null ? null : { x, y };
+}
+
+function markStickyNoteWindowFocused(win: BrowserWindow): void {
+  const index = stickyNoteFocusOrder.indexOf(win);
+  if (index !== -1) stickyNoteFocusOrder.splice(index, 1);
+  stickyNoteFocusOrder.unshift(win);
+}
+
+function removeStickyNoteWindowFromFocusOrder(win: BrowserWindow): void {
+  const index = stickyNoteFocusOrder.indexOf(win);
+  if (index !== -1) stickyNoteFocusOrder.splice(index, 1);
+}
+
+function findStickyNoteWindowAtPoint(
+  point: { x: number; y: number },
+  sourceWindow: BrowserWindow,
+): BrowserWindow | null {
+  const containsPoint = (win: BrowserWindow): boolean => {
+    const bounds = win.getBounds();
+    return (
+      point.x >= bounds.x &&
+      point.x <= bounds.x + bounds.width &&
+      point.y >= bounds.y &&
+      point.y <= bounds.y + bounds.height
+    );
+  };
+  const isCandidate = (win: BrowserWindow): boolean =>
+    win !== sourceWindow && !win.isDestroyed() && stickyNoteWindows.has(win);
+
+  // Prefer the topmost window under the cursor. We approximate stacking order
+  // with focus order (most-recently-focused first) so a dropped tab lands in
+  // the window the user actually sees on top, not one hidden behind it.
+  for (const win of stickyNoteFocusOrder) {
+    if (isCandidate(win) && containsPoint(win)) return win;
+  }
+
+  // Fallback for any window not yet tracked in the focus order.
+  for (const win of stickyNoteWindows) {
+    if (isCandidate(win) && !stickyNoteFocusOrder.includes(win) && containsPoint(win)) {
+      return win;
+    }
+  }
+
+  return null;
+}
+
+type StickyNoteCreateOptions = {
+  show?: boolean;
+  focusOnLoad?: boolean;
+  countAsOpen?: boolean;
+};
+
+function loadStickyNoteRenderer(stickyWindow: BrowserWindow): void {
+  const query = 'stickyNote=new';
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    const stickyUrl = new URL('/sticky.html', MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    stickyUrl.search = query;
+    void stickyWindow.loadURL(stickyUrl.href);
+  } else {
+    void stickyWindow.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/sticky.html`), {
+      search: query,
+    });
+  }
+}
+
+async function resolveStickyNoteById(noteId: number): Promise<Note | undefined> {
+  const history = await ensureHistoryModule();
+  return history.getNotes().find((note) => note.id === noteId);
+}
+
+function sendOpenNoteInSticky(stickyWindow: BrowserWindow, note: Note): void {
+  const deliver = () => {
+    if (stickyWindow.isDestroyed()) return;
+    try {
+      stickyWindow.webContents.send('open-note-in-sticky', note);
+    } catch {
+      // Window torn down mid-send.
+    }
+  };
+
+  if (stickyWindow.webContents.isLoading()) {
+    stickyWindow.webContents.once('did-finish-load', deliver);
+    return;
+  }
+  deliver();
+}
+
+function sendAttachNoteInSticky(stickyWindow: BrowserWindow, payload: StickyNoteAttachPayload): void {
+  const deliver = () => {
+    if (stickyWindow.isDestroyed()) return;
+    try {
+      stickyWindow.webContents.send('attach-note-in-sticky', payload);
+    } catch {
+      // Window torn down mid-send.
+    }
+  };
+
+  if (stickyWindow.webContents.isLoading()) {
+    stickyWindow.webContents.once('did-finish-load', deliver);
+    return;
+  }
+  deliver();
+}
+
+function scheduleWarmStickyNoteWindow(): void {
+  setTimeout(() => {
+    prepareWarmStickyNoteWindow();
+  }, 100);
+}
+
+type StickyNoteOpenOptions = {
+  forceNew?: boolean;
+};
+
+function parseStickyNoteWindowTarget(
+  noteArg: unknown,
+): { noteId?: number; attachPayload?: StickyNoteAttachPayload } {
+  if (typeof noteArg === 'number' && Number.isFinite(noteArg)) {
+    return { noteId: noteArg };
+  }
+  if (noteArg && typeof noteArg === 'object') {
+    const attachPayload = sanitizeStickyNoteAttachPayload(noteArg);
+    return { noteId: attachPayload.noteId, attachPayload };
+  }
+  return {};
+}
+
+function spawnStickyNoteWindow(
+  parsedOptions: StickyNoteWindowOptions | undefined,
+  target: { noteId?: number; attachPayload?: StickyNoteAttachPayload },
+): BrowserWindow {
+  const warmWindow = showWarmStickyNoteWindow(parsedOptions);
+  const targetWindow = warmWindow ?? createStickyNoteWindow(parsedOptions);
+  if (!warmWindow) scheduleWarmStickyNoteWindow();
+
+  if (target.attachPayload) {
+    sendAttachNoteInSticky(targetWindow, target.attachPayload);
+  } else if (target.noteId !== undefined) {
+    void resolveStickyNoteById(target.noteId).then((note) => {
+      if (note) sendOpenNoteInSticky(targetWindow, note);
+    });
+  }
+
+  return targetWindow;
+}
+
+async function openStickyNoteWindow(
+  noteArg?: unknown,
+  options?: unknown,
+  openOptions: StickyNoteOpenOptions = {},
+): Promise<void> {
+  const parsedOptions = sanitizeStickyNoteWindowOptions(options);
+  const { noteId, attachPayload } = parseStickyNoteWindowTarget(noteArg);
+  const forceNew = openOptions.forceNew ?? false;
+
+  // If a sticky note window already exists, route into it as a new tab
+  // rather than spawning another window — both for "open this saved note"
+  // (noteId set) and for "+ new blank note" (noteId undefined).
+  if (!forceNew && stickyNoteWindows.size > 0) {
+    const existingWindow = stickyNoteWindows.values().next().value as BrowserWindow | undefined;
+    if (existingWindow && !existingWindow.isDestroyed()) {
+      existingWindow.focus();
+      try {
+        if (attachPayload) {
+          sendAttachNoteInSticky(existingWindow, attachPayload);
+        } else if (noteId !== undefined) {
+          void resolveStickyNoteById(noteId).then((note) => {
+            if (note) sendOpenNoteInSticky(existingWindow, note);
+          });
+        } else {
+          existingWindow.webContents.send('new-blank-tab-in-sticky');
+        }
+      } catch {
+        // Window torn down mid-send; fall through to create a new one.
+      }
+      return;
+    }
+  }
+
+  spawnStickyNoteWindow(parsedOptions, { noteId, attachPayload });
+}
+
+function createStickyNoteWindow(
+  options?: StickyNoteWindowOptions,
+  createOptions: StickyNoteCreateOptions = {},
+): BrowserWindow {
+  const position = resolveStickyNoteWindowPosition(options);
+  const showImmediately = createOptions.show ?? true;
+  const focusOnLoad = createOptions.focusOnLoad ?? showImmediately;
+  const countAsOpen = createOptions.countAsOpen ?? showImmediately;
+  const stickyWindow = new BrowserWindow({
+    width: STICKY_NOTE_WINDOW_WIDTH,
+    height: STICKY_NOTE_WINDOW_HEIGHT,
+    x: position.x,
+    y: position.y,
+    minWidth: 572,
+    minHeight: 442,
+    frame: false,
+    hasShadow: true,
+    resizable: true,
+    alwaysOnTop: false,
+    skipTaskbar: false,
+    title: 'Note',
+    // Opaque window so the desktop never bleeds through the corners and the
+    // BrowserWindow can paint cream from frame zero — eliminates the brief
+    // empty/transparent flash the user perceived as a "loading screen".
+    // Win11 DWM applies subtle native rounded corners on frameless windows;
+    // older platforms render square corners (acceptable trade-off for zero
+    // styling artefacts).
+    transparent: false,
+    backgroundColor: '#F4EFE5',
+    roundedCorners: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+    // Always start hidden; we only show after the renderer has finished
+    // loading so the user never sees a blank cream window mid-mount.
+    show: false,
+    paintWhenInitiallyHidden: true,
+  });
+
+  if (countAsOpen) stickyNoteWindows.add(stickyWindow);
+  registerWindowSecurityHandlers(stickyWindow);
+  stickyWindow.on('focus', () => {
+    markStickyNoteWindowFocused(stickyWindow);
+  });
+  stickyWindow.once('closed', () => {
+    stickyNoteWindows.delete(stickyWindow);
+    removeStickyNoteWindowFromFocusOrder(stickyWindow);
+    expandedStickyNoteWindows.delete(stickyWindow);
+    if (warmStickyNoteWindow === stickyWindow) warmStickyNoteWindow = null;
+  });
+
+  // Hide the Echo splash at the native level before any paint can happen.
+  stickyWindow.webContents.once('dom-ready', () => {
+    try {
+      stickyWindow.webContents.insertCSS('#splash{display:none!important;visibility:hidden!important;}');
+    } catch { /* no-op */ }
+  });
+
+  stickyWindow.once('ready-to-show', () => {
+    if (stickyWindow.isDestroyed()) return;
+    if (showImmediately) stickyWindow.show();
+    if (focusOnLoad) stickyWindow.focus();
+  });
+
+  loadStickyNoteRenderer(stickyWindow);
+  return stickyWindow;
+}
+
+function prepareWarmStickyNoteWindow(): void {
+  if (warmStickyNoteWindow && !warmStickyNoteWindow.isDestroyed()) return;
+
+  warmStickyNoteWindow = createStickyNoteWindow(undefined, {
+    show: false,
+    focusOnLoad: false,
+    countAsOpen: false,
+  });
+}
+
+function showWarmStickyNoteWindow(options?: StickyNoteWindowOptions, note?: Note): BrowserWindow | null {
+  const stickyWindow = warmStickyNoteWindow;
+  if (!stickyWindow || stickyWindow.isDestroyed()) {
+    warmStickyNoteWindow = null;
+    return null;
+  }
+
+  warmStickyNoteWindow = null;
+  const position = resolveStickyNoteWindowPosition(options);
+  stickyWindow.setPosition(position.x, position.y, false);
+  stickyNoteWindows.add(stickyWindow);
+  stickyWindow.show();
+  stickyWindow.focus();
+
+  if (note) {
+    sendOpenNoteInSticky(stickyWindow, note);
+  }
+
+  scheduleWarmStickyNoteWindow();
+
+  return stickyWindow;
+}
 // ---------- Content Security Policy ----------
 //
 // We inject CSP at the response-header level rather than via a `<meta>`
@@ -1102,7 +1686,7 @@ const createWindow = () => {
   const defaultHeight = Math.min(idealHeight, maxHeight);
   // The "designed" launch size doubles as the resize floor — users can
   // grow the window freely on bigger displays, but never shrink below the
-  // baseline that the Dashboard/Insights/Settings layouts were tuned for.
+  // baseline that the Dashboard/Settings layouts were tuned for.
   const minWidth = defaultWidth;
   const minHeight = defaultHeight;
 
@@ -1154,9 +1738,9 @@ const createWindow = () => {
     center: !useRestoredBounds,
     frame: false,
     ...(windowIcon ? { icon: windowIcon } : {}),
-    // Matches the splash/app-shell surface (`hsl(195 53% 94%)` / #E8F4F8) so
+    // Matches the splash/app-shell cream (`hsl(38 35% 93%)` / #F4EFE5) so
     // the window paints the brand colour instantly instead of flashing white.
-    backgroundColor: '#E8F4F8',
+    backgroundColor: '#F4EFE5',
     skipTaskbar: process.platform === 'darwin' ? false : !settings.showAppInDock,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1255,6 +1839,9 @@ app.on('ready', async () => {
   // without a backend configured).
   await initAuth();
   initSync();
+  // Entitlements rides on top of auth: it subscribes to auth state and
+  // refreshes the cached plan whenever the session changes.
+  initEntitlements();
 
   // Push the renderer back into a "logged-out, sync paused" state if
   // Supabase ever revokes the session (e.g. user deletes their account
@@ -1325,14 +1912,31 @@ app.on('ready', async () => {
   }
 });
 
+/** Dispatch a deep link to the right handler. */
+function handleDeepLink(url: string): void {
+  if (!url.startsWith(`${PROTOCOL}://`)) return;
+  // Anything under echo://billing/* (success, cancel, return) is the
+  // user coming back from a Stripe Checkout or Customer Portal session.
+  // Trigger a few quick entitlements refreshes so the UI picks up the
+  // new plan as soon as the webhook lands, and notify the renderer.
+  if (/^echo:\/\/billing\b/i.test(url)) {
+    refreshAfterBillingReturn();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('billing-deep-link', url);
+    }
+    return;
+  }
+  // Default: treat as an OAuth callback (echo://auth-callback?code=...)
+  void completeOAuthCallback(url);
+}
+
 app.on('second-instance', (_event, argv) => {
   showExistingWindow();
-  // Windows OAuth deep links arrive in argv when the OS hands the URL
-  // off to the already-running Echo instance. Anything that looks like
-  // `echo://...` is forwarded to the auth handler.
+  // Windows deep links arrive in argv when the OS hands the URL off to
+  // the already-running Echo instance.
   for (const arg of argv) {
     if (typeof arg === 'string' && arg.startsWith(`${PROTOCOL}://`)) {
-      void completeOAuthCallback(arg);
+      handleDeepLink(arg);
     }
   }
 });
@@ -1341,9 +1945,7 @@ app.on('second-instance', (_event, argv) => {
 // providers that round-trip through a system browser handler).
 app.on('open-url', (event, url) => {
   event.preventDefault();
-  if (url.startsWith(`${PROTOCOL}://`)) {
-    void completeOAuthCallback(url);
-  }
+  handleDeepLink(url);
 });
 
 // On startup, the original argv may contain an OAuth callback if the
@@ -1352,7 +1954,7 @@ app.on('open-url', (event, url) => {
 // session is already restored when the app paints.
 const initialDeepLink = process.argv.find((a) => typeof a === 'string' && a.startsWith(`${PROTOCOL}://`));
 if (initialDeepLink) {
-  app.whenReady().then(() => completeOAuthCallback(initialDeepLink));
+  app.whenReady().then(() => handleDeepLink(initialDeepLink));
 }
 
 app.on('window-all-closed', () => {

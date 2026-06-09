@@ -129,7 +129,28 @@ drop trigger if exists snippets_set_updated_at on public.snippets;
 create trigger snippets_set_updated_at before update on public.snippets
   for each row execute function public.set_updated_at();
 
--- ─────────────────────────── custom_styles ──────────────────────────
+-- ─────────────────────────── notes ──────────────────────────────────
+create table if not exists public.notes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users on delete cascade,
+  title text not null default '',
+  body text not null default '',
+  pinned boolean not null default false,
+  client_created_at timestamptz not null,
+  updated_at timestamptz default now(),
+  deleted_at timestamptz
+);
+
+-- Backfill for projects created before `pinned` existed.
+alter table public.notes add column if not exists pinned boolean not null default false;
+
+create index if not exists notes_user_id_idx         on public.notes (user_id);
+create index if not exists notes_user_updated_at_idx on public.notes (user_id, updated_at desc);
+drop trigger if exists notes_set_updated_at on public.notes;
+create trigger notes_set_updated_at before update on public.notes
+  for each row execute function public.set_updated_at();
+
+-- â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ custom_styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 create table if not exists public.custom_styles (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users on delete cascade,
@@ -152,6 +173,7 @@ alter table public.settings      enable row level security;
 alter table public.history       enable row level security;
 alter table public.dictionary    enable row level security;
 alter table public.snippets      enable row level security;
+alter table public.notes         enable row level security;
 alter table public.custom_styles enable row level security;
 
 -- Profiles: users can read & update only their own row. Inserts are
@@ -166,7 +188,7 @@ do $$
 declare
   t text;
 begin
-  for t in select unnest(array['settings','history','dictionary','snippets','custom_styles']) loop
+  for t in select unnest(array['settings','history','dictionary','snippets','notes','custom_styles']) loop
     execute format('drop policy if exists %I_self_all on public.%I', t, t);
     execute format(
       'create policy %I_self_all on public.%I for all using (auth.uid() = user_id) with check (auth.uid() = user_id)',
@@ -178,7 +200,7 @@ end$$;
 -- ─────────────────── self-service account deletion ──────────────────
 -- Lets a signed-in user permanently delete their own auth.users row +
 -- every linked data row. The on-delete-cascade FKs on history,
--- snippets, dictionary, custom_styles, settings, profiles take care of
+-- snippets, dictionary, notes, custom_styles, settings, profiles take care of
 -- wiping the data when auth.users is deleted.
 --
 -- Why SECURITY DEFINER: the auth.users table is owned by `supabase_auth_admin`

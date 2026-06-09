@@ -23,23 +23,23 @@ export default function EchoMark({ className, title }: EchoMarkProps) {
     >
       <defs>
         <linearGradient id={rearGradientId} x1="96" y1="58" x2="190" y2="258" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#FFFFFF" />
-          <stop offset="55%" stopColor="#DCE6FF" />
-          <stop offset="100%" stopColor="#EEF2FF" />
+          <stop offset="0%" stopColor="#FAF9F6" />
+          <stop offset="55%" stopColor="#EDEAE0" />
+          <stop offset="100%" stopColor="#E1DDD0" />
         </linearGradient>
         <linearGradient id={middleGradientId} x1="156" y1="60" x2="250" y2="260" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#B8C9FF" />
-          <stop offset="48%" stopColor="#6E91FF" />
-          <stop offset="100%" stopColor="#4E55FF" />
+          <stop offset="0%" stopColor="#F1D3C9" />
+          <stop offset="48%" stopColor="#E29E4B" />
+          <stop offset="100%" stopColor="#C96442" />
         </linearGradient>
         <linearGradient id={gradientId} x1="232" y1="52" x2="378" y2="262" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#F3F7FF" />
-          <stop offset="42%" stopColor="#A9C7FF" />
-          <stop offset="100%" stopColor="#5963FF" />
+          <stop offset="0%" stopColor="#FBF3F0" />
+          <stop offset="42%" stopColor="#E58A69" />
+          <stop offset="100%" stopColor="#D97757" />
         </linearGradient>
         <filter id={glowId} x="48" y="24" width="424" height="272" colorInterpolationFilters="sRGB">
           <feGaussianBlur stdDeviation="8" result="blur" />
-          <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.30 0 0 0 0 0.36 0 0 0 0 1.00 0 0 0 0.34 0" />
+          <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.85 0 0 0 0 0.47 0 0 0 0 0.34 0 0 0 0.24 0" />
           <feBlend in="SourceGraphic" mode="screen" />
         </filter>
       </defs>

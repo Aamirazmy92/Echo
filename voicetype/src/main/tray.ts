@@ -94,16 +94,33 @@ async function getAudioInputDevices(mainWindow: BrowserWindow): Promise<Array<{ 
 
   try {
     const devices = await mainWindow.webContents.executeJavaScript(`
-      navigator.mediaDevices.enumerateDevices()
-        .then((devices) =>
-          devices
-            .filter((device) => device.kind === 'audioinput')
-            .map((device, index) => ({
-              id: device.deviceId,
-              label: device.label || 'Microphone ' + (index + 1)
-            }))
-        )
-        .catch(() => [])
+      (async () => {
+        const virtualIds = new Set(['', 'default', 'communications']);
+        const unlockLabels = async () => {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach((track) => track.stop());
+          } catch {}
+        };
+        const listInputs = async () => {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          return devices.filter((device) => device.kind === 'audioinput');
+        };
+
+        let mics = await listInputs();
+        if (mics.some((device) => !device.label)) {
+          await unlockLabels();
+          mics = await listInputs();
+        }
+
+        const seen = new Set();
+        return mics
+          .filter((device) => device.deviceId && !virtualIds.has(device.deviceId) && !seen.has(device.deviceId) && seen.add(device.deviceId))
+          .map((device, index) => ({
+            id: device.deviceId,
+            label: device.label || 'Microphone ' + (index + 1),
+          }));
+      })()
     `, true);
 
     return Array.isArray(devices) ? devices : cachedMicrophones;
@@ -135,7 +152,9 @@ async function updateTrayMenu() {
         void refreshTrayMenu();
       },
     },
-    ...cachedMicrophones.map((device) => ({
+    ...cachedMicrophones
+      .filter((device) => device.id && device.id !== 'default' && device.id !== 'communications')
+      .map((device) => ({
       label: device.label,
       type: 'radio' as const,
       checked: settings.microphoneId === device.id,

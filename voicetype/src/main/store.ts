@@ -1,6 +1,6 @@
 import Store from 'electron-store';
 import { Settings } from '../shared/types';
-import { app, safeStorage } from 'electron';
+import { app } from 'electron';
 import {
   migrateLegacyStyleSelection,
   sanitizeSelectedGlobalStyleId,
@@ -40,51 +40,6 @@ const defaults: Settings = {
 };
 
 let store: Store<Settings>;
-const ENCRYPTED_SECRET_PREFIX = 'safe:';
-
-function encryptSecret(secret: string): string {
-  if (!secret) return '';
-  if (!safeStorage.isEncryptionAvailable()) {
-    // Refuse to persist a secret in plaintext. The caller (setGroqApiKey) is
-    // expected to check isSecureStorageAvailable() before reaching here, but
-    // this is a defense-in-depth guard so we never silently leak the key
-    // into ~/AppData/Roaming/Echo/config.json in clear text.
-    throw new Error(
-      'Secure storage is unavailable on this system. Echo cannot persist the Groq API key safely.'
-    );
-  }
-  return `${ENCRYPTED_SECRET_PREFIX}${safeStorage.encryptString(secret).toString('base64')}`;
-}
-
-export function isSecureStorageAvailable(): boolean {
-  try {
-    return safeStorage.isEncryptionAvailable();
-  } catch {
-    return false;
-  }
-}
-
-function decryptSecret(secret: string): string {
-  if (!secret) return '';
-  if (!secret.startsWith(ENCRYPTED_SECRET_PREFIX)) return secret;
-  if (!safeStorage.isEncryptionAvailable()) return '';
-
-  try {
-    const encrypted = Buffer.from(secret.slice(ENCRYPTED_SECRET_PREFIX.length), 'base64');
-    return safeStorage.decryptString(encrypted);
-  } catch {
-    return '';
-  }
-}
-
-// UI masks a saved key as a string of bullets. If that mask ever reaches
-// setGroqApiKey (e.g. the user clicks Save without editing, or pastes next
-// to the mask), we must reject it so we don't overwrite the real encrypted
-// key with a string of bullet characters that Groq will then reject.
-const MASK_PLACEHOLDER_REGEX = /^[\u2022\s]*$/;
-function looksLikeMaskPlaceholder(value: string): boolean {
-  return MASK_PLACEHOLDER_REGEX.test(value);
-}
 
 function hydrateSettings(settings: Settings): Settings {
   const languageSelection = getEffectiveLanguageSelection(settings);
@@ -94,19 +49,8 @@ function hydrateSettings(settings: Settings): Settings {
     language: languageSelection.autoDetectLanguage ? 'auto' : getPrimarySelectedLanguage(languageSelection),
     selectedLanguages: languageSelection.selectedLanguages,
     autoDetectLanguage: languageSelection.autoDetectLanguage,
-    groqApiKey: decryptSecret(settings.groqApiKey) ? '••••••••' : '',
+    groqApiKey: '',
   };
-}
-
-function persistGroqApiKeyIfNeeded(): void {
-  const storedKey = store.get('groqApiKey');
-  if (typeof storedKey !== 'string' || !storedKey) return;
-  if (storedKey.startsWith(ENCRYPTED_SECRET_PREFIX)) return;
-
-  const encryptedKey = encryptSecret(storedKey);
-  if (encryptedKey !== storedKey) {
-    store.set('groqApiKey', encryptedKey);
-  }
 }
 
 export function initStore() {
@@ -116,20 +60,9 @@ export function initStore() {
     delete(key: string): void;
   };
 
-  // One-time repair: if an earlier build saved a bullet-mask as the key,
-  // drop it so the user is prompted to enter a real key instead of being
-  // stuck in an undecryptable / Groq-rejecting state.
-  try {
-    const rawStoredKey = store.get('groqApiKey');
-    if (typeof rawStoredKey === 'string' && rawStoredKey.startsWith(ENCRYPTED_SECRET_PREFIX)) {
-      const decrypted = decryptSecret(rawStoredKey);
-      if (decrypted && looksLikeMaskPlaceholder(decrypted)) {
-        console.warn('[store] Discarding previously-saved API key that was a UI mask placeholder.');
-        store.set('groqApiKey', '');
-      }
-    }
-  } catch {
-    // ignore — decryption errors are handled at read time
+  if (store.get('groqApiKey')) {
+    console.warn('[store] Clearing saved Groq API key; cloud access now requires Echo Pro.');
+    store.set('groqApiKey', '');
   }
 
   const legacyHotkey = legacyStore.get('hotkey') as string | undefined;
@@ -165,7 +98,6 @@ export function initStore() {
 
   legacyStore.delete('categoryStyleSelections');
   legacyStore.delete('enabledStyleCategories');
-  persistGroqApiKeyIfNeeded();
 
   const languageSelection = getEffectiveLanguageSelection({
     language: legacyStore.get('language'),
@@ -198,40 +130,6 @@ export function getSettings(): Settings {
   return hydrateSettings(store.store);
 }
 
-export function hasGroqApiKey(): boolean {
-  const storedKey = store.get('groqApiKey');
-  if (!storedKey || typeof storedKey !== 'string') return false;
-  return !!decryptSecret(storedKey);
-}
-
-export function getGroqApiKeyPlain(): string {
-  const storedKey = store.get('groqApiKey');
-  if (!storedKey || typeof storedKey !== 'string') return '';
-  return decryptSecret(storedKey);
-}
-
-export function setGroqApiKey(key: string): void {
-  const trimmed = key.trim();
-
-  // Strip any bullet mask characters that a careless paste may have left
-  // glued to the real key — e.g. "••••••••gsk_abc...". Without this the
-  // saved value is corrupted and Groq rejects it forever after, which is
-  // exactly the "my key keeps resetting" symptom users report.
-  const cleaned = trimmed.replace(/[\u2022]+/g, '');
-
-  if (!cleaned || looksLikeMaskPlaceholder(trimmed)) {
-    throw new Error(
-      'Refusing to save an empty or masked API key. Clear the field and paste a real key.'
-    );
-  }
-
-  store.set('groqApiKey', encryptSecret(cleaned));
-}
-
-export function clearGroqApiKey(): void {
-  store.set('groqApiKey', '');
-}
-
 export function saveSettings(partial: Partial<Settings>) {
   const normalizedPartial: Partial<Settings> = { ...partial };
   const currentSettings = getSettings();
@@ -253,7 +151,7 @@ export function saveSettings(partial: Partial<Settings>) {
   }
 
   if (partial.groqApiKey !== undefined) {
-    console.warn('Ignoring groqApiKey in saveSettings — use setGroqApiKey/clearGroqApiKey instead');
+    console.warn('Ignoring groqApiKey in saveSettings — personal Groq keys are no longer supported');
     delete normalizedPartial.groqApiKey;
   }
 

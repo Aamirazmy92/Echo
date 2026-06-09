@@ -1,7 +1,9 @@
 import { Settings, SpeechMetrics } from '../shared/types';
 import { resolveRecognitionLanguage } from '../shared/languages';
 import { transcribeWithLocalModel } from './localTranscribe';
-import { transcribeWithCloud } from './cloudTranscribe';
+import { transcribeWithCloudProxy } from './cloudTranscribe';
+import { isProUser, refreshEntitlements } from './entitlements';
+import { logWarn } from './logger';
 
 const SILENCE_FRAME_THRESHOLD = 5;
 const SILENCE_RMS_THRESHOLD = 0.04;
@@ -114,6 +116,17 @@ export function hasMeaningfulTranscriptContent(text: string): boolean {
   return /[\p{L}\p{N}]/u.test(text);
 }
 
+async function refreshEntitlementsForRouting(): Promise<void> {
+  if (isProUser()) return;
+
+  try {
+    await refreshEntitlements();
+  } catch (err) {
+    // Entitlements affect cloud routing only; local dictation must keep working.
+    logWarn('transcribe', 'Entitlements refresh failed before routing, continuing with cached state', err);
+  }
+}
+
 const WHISPER_PHANTOMS = new Set([
   'thank you',
   'thank you very much',
@@ -216,8 +229,7 @@ export async function transcribeAudio(
   audioBuffer: ArrayBuffer,
   settings: Settings,
   durationMs?: number,
-  speechMetrics?: SpeechMetrics,
-  groqApiKey = ''
+  speechMetrics?: SpeechMetrics
 ): Promise<TranscribeResult> {
   if (!audioBuffer || audioBuffer.byteLength === 0) {
     return { text: '', method: 'local' };
@@ -240,17 +252,25 @@ export async function transcribeAudio(
     let detectedLanguage: string | undefined;
     const recognitionLanguage = resolveRecognitionLanguage(settings);
 
-    if (settings.useCloudTranscription && groqApiKey) {
+    // Resolution order:
+    //   1. Cloud mode + Pro entitlement → server-side cloud proxy
+    //   2. Local Whisper model. Free users cannot bring their own Groq key;
+    //      Cloud is unlocked only by Pro/developer entitlements.
+    // Step 1 falls back to local on any cloud failure so dictation
+    // never silently disappears.
+    await refreshEntitlementsForRouting();
+    const useProxy = settings.useCloudTranscription && isProUser();
+
+    if (useProxy) {
       try {
-        const cloudResult = await transcribeWithCloud(audioBuffer, groqApiKey, recognitionLanguage);
+        const cloudResult = await transcribeWithCloudProxy(audioBuffer, recognitionLanguage);
         raw = cloudResult.text;
         detectedLanguage = cloudResult.detectedLanguage;
         method = 'cloud';
       } catch (err: unknown) {
         const cloudFailure = err as { message?: unknown; status?: unknown; type?: unknown };
         cloudError = typeof cloudFailure.message === 'string' ? cloudFailure.message : String(err);
-        console.warn('[transcribe] Cloud failed, falling back to local:', cloudError);
-        console.warn('[transcribe] Error status:', cloudFailure.status, 'type:', cloudFailure.type);
+        logWarn('transcribe', 'Cloud proxy failed, falling back to local', err);
         raw = await transcribeWithLocalModel(audioBuffer, recognitionLanguage);
         method = 'local (cloud-fallback)';
       }
@@ -260,7 +280,6 @@ export async function transcribeAudio(
 
     const text = removeTranscriptArtifacts(raw);
 
-    // Filter punctuation-only results (e.g. "." from cloud on silence)
     if (!text || !hasMeaningfulTranscriptContent(text)) {
       return { text: '', method, cloudError, detectedLanguage };
     }

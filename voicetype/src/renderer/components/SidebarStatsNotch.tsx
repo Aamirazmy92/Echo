@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Flame } from 'lucide-react';
+import type { DictationEntry } from '../../shared/types';
 
 type DashboardStats = {
   totalWords: number;
@@ -14,41 +16,55 @@ const emptyStats: DashboardStats = {
   avgSessionMs: 0,
 };
 
-function formatAvgSpeed(stats: DashboardStats) {
-  if (stats.avgSessionMs === 0 || stats.totalSessions === 0) {
-    return '0';
-  }
-
+function computeWpm(stats: DashboardStats): number {
+  if (stats.avgSessionMs === 0 || stats.totalSessions === 0) return 0;
   const speed = stats.totalWords / (stats.totalSessions * stats.avgSessionMs / 1000 / 60);
-  return String(Math.round(speed || 0));
+  return Math.round(speed || 0);
 }
 
-function formatSessionLength(avgSessionMs: number): { value: string; unit: string } {
-  if (!avgSessionMs) {
-    return { value: '0', unit: 'secs' };
+function startOfWeek(d: Date): Date {
+  const out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const day = out.getDay();
+  const mondayOffset = (day + 6) % 7;
+  out.setDate(out.getDate() - mondayOffset);
+  out.setHours(0, 0, 0, 0);
+  return out;
+}
+
+function computeWeekStreak(entries: ReadonlyArray<DictationEntry>): number {
+  if (entries.length === 0) return 0;
+
+  const weeks = new Set<number>();
+  for (const entry of entries) {
+    const t = Date.parse(entry.createdAt);
+    if (!Number.isFinite(t)) continue;
+    weeks.add(startOfWeek(new Date(t)).getTime());
   }
 
-  const totalSeconds = Math.max(1, Math.round(avgSessionMs / 1000));
-  if (totalSeconds < 60) {
-    return { value: String(totalSeconds), unit: 'secs' };
+  let cursor = startOfWeek(new Date()).getTime();
+  let streak = 0;
+  while (weeks.has(cursor)) {
+    streak += 1;
+    const prev = new Date(cursor);
+    prev.setDate(prev.getDate() - 7);
+    cursor = prev.getTime();
   }
-
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return seconds
-    ? { value: `${minutes}:${seconds.toString().padStart(2, '0')}`, unit: '' }
-    : { value: String(minutes), unit: 'mins' };
+  return streak;
 }
 
 export default function SidebarStatsNotch() {
   const [stats, setStats] = useState<DashboardStats>(emptyStats);
+  const [history, setHistory] = useState<DictationEntry[] | null>(null);
+  const lastSyncReloadAtRef = useRef<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
-      const data = await window.api.getDashboardData(50, 0) as {
+      const data = await window.api.getDashboardData(500, 0) as {
         stats: DashboardStats;
+        history: DictationEntry[];
       };
       setStats(data.stats);
+      setHistory(data.history);
     } catch (error) {
       console.error('Failed to load sidebar stats:', error);
     }
@@ -56,68 +72,85 @@ export default function SidebarStatsNotch() {
 
   useEffect(() => {
     void loadData();
-
     const unsub = window.api.onTranscriptionResult(() => {
+      void loadData();
+    });
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [loadData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshAfterSignIn = async () => {
+      await loadData();
+      try {
+        await window.api.syncForce();
+      } catch (error) {
+        console.error('Failed to refresh sidebar stats sync after sign-in:', error);
+      }
+      if (!cancelled) await loadData();
+    };
+
+    void window.api.authGetSession().then((session) => {
+      if (!cancelled && session?.userId) void refreshAfterSignIn();
+    }).catch(() => undefined);
+
+    const offAuth = window.api.onAuthState((session) => {
+      if (!session?.userId) {
+        lastSyncReloadAtRef.current = null;
+        setStats(emptyStats);
+        setHistory([]);
+        return;
+      }
+      void refreshAfterSignIn();
+    });
+
+    const offSync = window.api.onSyncStatus((payload) => {
+      if (payload.status === 'signed-out') {
+        lastSyncReloadAtRef.current = null;
+        setStats(emptyStats);
+        setHistory([]);
+        return;
+      }
+      if (payload.status !== 'idle' || !payload.lastSyncedAt) return;
+      if (payload.lastSyncedAt === lastSyncReloadAtRef.current) return;
+      lastSyncReloadAtRef.current = payload.lastSyncedAt;
       void loadData();
     });
 
     return () => {
-      if (unsub) {
-        unsub();
-      }
+      cancelled = true;
+      offAuth();
+      offSync();
     };
   }, [loadData]);
 
-  const sidebarStats = useMemo(() => {
-    const session = formatSessionLength(stats.avgSessionMs);
-    return [
-      {
-        label: 'Words',
-        value: stats.totalWords.toLocaleString(),
-        unit: '',
-      },
-      {
-        label: 'Session',
-        value: session.value,
-        unit: session.unit,
-      },
-      {
-        label: 'Streak',
-        value: stats.todayWords > 0 ? '1' : '0',
-        unit: 'days',
-      },
-      {
-        label: 'Speed',
-        value: formatAvgSpeed(stats),
-        unit: 'wpm',
-      },
-    ];
-  }, [stats]);
+  const { streakLabel, wordsLabel, wpmLabel } = useMemo(() => {
+    const streak = history === null ? null : computeWeekStreak(history);
+    return {
+      streakLabel: streak === null ? '—' : String(streak),
+      wordsLabel: stats.totalWords.toLocaleString(),
+      wpmLabel: String(computeWpm(stats)),
+    };
+  }, [stats, history]);
 
   return (
-    <section className="rounded-[22px] border border-black/[0.07] bg-white/78 px-5 py-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-      <div className="flex flex-col gap-3">
-        {sidebarStats.map((stat) => (
-          <div
-            key={stat.label}
-            className="flex items-baseline justify-between gap-3"
-          >
-            <p className="text-[14px] font-medium leading-none text-foreground/68">
-              {stat.label}
-            </p>
-            <div className="inline-flex items-baseline gap-1.5 text-right">
-              <span className="stat-num text-[22px] font-medium leading-none tabular-nums text-foreground">
-                {stat.value}
-              </span>
-              {stat.unit && (
-                <span className="stat-num text-[15px] font-medium leading-none text-foreground/68">
-                  {stat.unit}
-                </span>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
+    <div className="echo-stat-chip" aria-label="Recent dictation stats">
+      <span className="flame" aria-hidden="true">
+        <Flame size={13} strokeWidth={2} fill="currentColor" />
+      </span>
+      <span>
+        <span className="num">{streakLabel}</span> wk streak
+      </span>
+      <span className="div" aria-hidden="true" />
+      <span>
+        <span className="num">{wordsLabel}</span> words
+      </span>
+      <span className="div" aria-hidden="true" />
+      <span>
+        <span className="num">{wpmLabel}</span> wpm
+      </span>
+    </div>
   );
 }

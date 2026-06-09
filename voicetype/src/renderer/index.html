@@ -11,6 +11,35 @@
       See `setupContentSecurityPolicy` in `src/main/index.ts`.
     -->
     <title>Echo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,500;8..60,600&family=Geist:wght@400;450;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Sticky-note windows: mark <html> and inject a blocking style before
+      // <body> is parsed so the splash never renders a single frame.
+      (function () {
+        try {
+          if (new URLSearchParams(window.location.search).has('stickyNote')) {
+            document.documentElement.classList.add('is-sticky-note');
+            document.title = 'Note';
+            var s = document.createElement('style');
+            s.textContent =
+              '#splash{display:none!important;visibility:hidden!important}' +
+              'html,html body,html #root{background:transparent!important}';
+            document.head.appendChild(s);
+          }
+        } catch (_) { /* no-op */ }
+      })();
+    </script>
+    <style>
+      html.is-sticky-note #splash { display: none !important; visibility: hidden !important; }
+      html.is-sticky-note,
+      html.is-sticky-note body,
+      html.is-sticky-note #root { background: transparent !important; }
+    </style>
     <style>
       html,
       body {
@@ -21,12 +50,12 @@
       body {
         overflow: hidden;
         font-family: "Figtree", "Aptos", "Segoe UI Variable Display", "Segoe UI Variable Text", "SF Pro Display", "Helvetica Neue", sans-serif;
-        background: hsl(195 53% 94%);
+        background: hsl(220 17% 92%);
       }
 
       #root {
         height: 100%;
-        background: hsl(195 53% 94%);
+        background: hsl(220 17% 92%);
       }
 
       #splash {
@@ -36,14 +65,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        /* Match the in-app shell so the splash hands off seamlessly:
-             - pale icy-blue canvas (same as --app-bg / #E8F4F8)
-             - subtle white highlight upper-right
-             - faint deeper-blue glow lower-left for depth */
-        background:
-          radial-gradient(58% 42% at 14% 102%, rgba(120, 170, 200, 0.16), transparent 70%),
-          radial-gradient(34% 36% at 86% 8%, rgba(255, 255, 255, 0.55), transparent 72%),
-          linear-gradient(180deg, hsl(195 60% 96%) 0%, hsl(195 48% 92%) 100%);
+        background: hsl(220 17% 92%);
         transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1),
                     visibility 0.5s cubic-bezier(0.4, 0, 0.2, 1);
         opacity: 1;
@@ -67,10 +89,7 @@
       }
 
       #splash .splash-mark {
-        width: 140px;
-        height: 140px;
-        margin-bottom: 18px;
-        filter: drop-shadow(0 28px 42px rgba(80, 92, 255, 0.18));
+        display: none;
         pointer-events: none;
         animation: splash-text-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
       }
@@ -85,22 +104,23 @@
 
       #splash .splash-wordmark {
         position: relative;
-        font-family: "Figtree", "Aptos", "Segoe UI Variable Display", "SF Pro Display", "Helvetica Neue", sans-serif;
-        font-weight: 650;
-        font-size: 30px;
+        font-family: "Figtree", "Aptos", "Segoe UI Variable Display", "Segoe UI Variable Text", "SF Pro Display", "Helvetica Neue", sans-serif;
+        font-weight: 700;
+        font-size: 36px;
         line-height: 1;
-        letter-spacing: -0.04em;
-        color: hsl(222 22% 12%);
+        letter-spacing: 0;
+        color: hsl(224 22% 11%);
         animation: splash-text-in 0.9s 0.08s cubic-bezier(0.22, 1, 0.36, 1) both;
       }
 
       #splash .splash-tagline {
         position: relative;
         margin-top: 10px;
-        font-size: 13px;
+        font-size: 11px;
         font-weight: 500;
-        letter-spacing: 0.01em;
-        color: hsl(220 9% 46%);
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(30 8% 47%);
         animation: splash-text-in 0.9s 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
       }
 
@@ -112,9 +132,9 @@
         position: relative;
         margin-top: 36px;
         width: 220px;
-        height: 4px;
+        height: 3px;
         border-radius: 999px;
-        background: rgba(15, 23, 42, 0.06);
+        background: rgba(31, 27, 22, 0.08);
         overflow: hidden;
         animation: splash-text-in 0.9s 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
       }
@@ -127,10 +147,10 @@
         border-radius: 999px;
         background: linear-gradient(
           90deg,
-          hsl(244 76% 64%) 0%,
-          hsl(244 82% 72%) 100%
+          hsl(32 42% 58%) 0%,
+          hsl(32 50% 70%) 100%
         );
-        box-shadow: 0 0 12px rgba(108, 102, 232, 0.45);
+        box-shadow: 0 0 12px rgba(201, 165, 122, 0.45);
         animation: splash-progress 5.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
       }
 
@@ -193,13 +213,23 @@
       }
     </style>
   </head>
-  <body>
-    <!-- Splash screen — visible instantly, hidden once React + fonts are ready -->
-    <div id="splash" role="status" aria-label="Loading Echo">
+  <body spellcheck="false">
+    <script>
+      // Sticky-note fallback: nuke splash node before browser paints it.
+      (function () {
+        try {
+          if (new URLSearchParams(window.location.search).has('stickyNote')) {
+            var s = document.getElementById('splash');
+            if (s && s.parentNode) s.parentNode.removeChild(s);
+            document.documentElement.classList.add('is-sticky-note');
+          }
+        } catch (_) {}
+      })();
+    </script>
+    <!-- Splash screen — starts hidden; main-window code makes it visible.
+         Sticky-note windows never show it (head script + main.tsx keep it hidden). -->
+    <div id="splash" style="display:none" role="status" aria-label="Loading Echo">
       <div class="splash-stage">
-        <div class="splash-mark" aria-hidden="true">
-          <img src="./assets/echo-logo.png" alt="" draggable="false" />
-        </div>
         <div class="splash-wordmark">Echo</div>
         <div class="splash-tagline">Voice dictation, instantly</div>
         <div class="splash-progress" aria-hidden="true">

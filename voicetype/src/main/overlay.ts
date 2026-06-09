@@ -1,6 +1,7 @@
 import { BrowserWindow, screen, ipcMain } from 'electron';
 import path from 'path';
 import { getSettings } from './store';
+import { logWarn } from './logger';
 import { AppState } from '../shared/types';
 
 let overlayWindow: BrowserWindow | null = null;
@@ -13,6 +14,7 @@ let overlayReadyWaiters: Array<(ready: boolean) => void> = [];
 let overlayHasRenderedFrame = false;
 let overlayDisplayAllowed = false;
 let overlayDisplayPollTimer: NodeJS.Timeout | null = null;
+let overlayRecoveryTimer: NodeJS.Timeout | null = null;
 let lastOverlayDisplayId: number | null = null;
 const OVERLAY_CLEAR_COLOR = '#00000000';
 
@@ -94,6 +96,35 @@ function stopOverlayDisplayTracking() {
   }
 
   lastOverlayDisplayId = null;
+}
+
+function clearOverlayRecoveryTimer() {
+  if (overlayRecoveryTimer) {
+    clearTimeout(overlayRecoveryTimer);
+    overlayRecoveryTimer = null;
+  }
+}
+
+function scheduleOverlayRecovery(reason: string) {
+  if (overlayRecoveryTimer || currentOverlayState === 'idle' || !shouldShowOverlay()) {
+    return;
+  }
+
+  overlayRecoveryTimer = setTimeout(() => {
+    overlayRecoveryTimer = null;
+    if (currentOverlayState === 'idle' || !shouldShowOverlay()) return;
+    if (overlayWindow && !overlayWindow.isDestroyed() && overlayHasRenderedFrame) return;
+
+    logWarn('overlay', `recovering missing overlay renderer (${reason})`);
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.destroy();
+    }
+    setImmediate(() => {
+      if (currentOverlayState !== 'idle' && shouldShowOverlay() && (!overlayWindow || overlayWindow.isDestroyed())) {
+        createOverlay();
+      }
+    });
+  }, 700);
 }
 
 function syncOverlayDisplayTracking() {
@@ -203,6 +234,7 @@ function registerOverlayIpc() {
     if (event.sender.id !== overlayWindow.webContents.id) return;
 
     overlayHasRenderedFrame = true;
+    clearOverlayRecoveryTimer();
     overlayWindow.webContents.setBackgroundThrottling(currentOverlayState === 'idle');
     flushOverlayReady(true);
 
@@ -272,6 +304,7 @@ export function createOverlay(): BrowserWindow {
 
   overlayWindow.on('closed', () => {
     stopOverlayDisplayTracking();
+    clearOverlayRecoveryTimer();
     overlayHasRenderedFrame = false;
     flushOverlayReady(false);
     overlayWindow = null;
@@ -321,6 +354,7 @@ export function createOverlay(): BrowserWindow {
     stopOverlayDisplayTracking();
     overlayHasRenderedFrame = false;
     overlayWindow.hide();
+    scheduleOverlayRecovery('did-fail-load');
   });
 
   overlayWindow.webContents.on('render-process-gone', () => {
@@ -328,6 +362,7 @@ export function createOverlay(): BrowserWindow {
     stopOverlayDisplayTracking();
     overlayHasRenderedFrame = false;
     overlayWindow.hide();
+    scheduleOverlayRecovery('render-process-gone');
   });
 
   overlayWindow.once('ready-to-show', () => {
@@ -381,6 +416,8 @@ export function updateOverlayState(state: AppState, extraData?: unknown) {
 
     if (overlayHasRenderedFrame && shouldShowOverlay()) {
       ensureOverlayVisible();
+    } else if (state !== 'idle' && shouldShowOverlay()) {
+      scheduleOverlayRecovery('state requested before render-ready');
     } else if (!shouldShowOverlay() && overlayWindow.isVisible()) {
       stopOverlayDisplayTracking();
       overlayWindow.hide();

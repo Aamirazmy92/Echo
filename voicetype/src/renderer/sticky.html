@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html class="is-sticky-note">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Note</title>
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        /* Match the BrowserWindow backgroundColor so the very first paint is
+           cream (no flash) before React mounts. */
+        background: #F4EFE5;
+      }
+
+      body {
+        font-family: "Figtree", "Segoe UI", sans-serif;
+      }
+    </style>
+  </head>
+  <body spellcheck="false">
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

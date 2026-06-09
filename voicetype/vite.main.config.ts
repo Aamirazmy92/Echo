@@ -39,6 +39,10 @@ export default defineConfig(({ command }) => ({
       output: {
         format: 'cjs',
         entryFileNames: 'main.js',
+        // The Electron main process keeps auth/entitlement state in module
+        // singletons. Runtime chunks can duplicate that state across lazy
+        // imports, so keep the main process in one bundle.
+        inlineDynamicImports: true,
       },
     },
   },

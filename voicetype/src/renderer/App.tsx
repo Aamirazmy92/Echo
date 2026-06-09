@@ -1,29 +1,41 @@
 import { useState, useEffect, useRef, useCallback, Suspense, lazy, startTransition } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Minus,
   Square,
   X,
   Home,
   BookOpen,
-  Scissors,
+  Pencil,
   Type,
-  BarChart3,
+  FileText,
   Settings as SettingsIcon,
   PanelLeft,
   Download,
   Loader2,
   RefreshCw,
+  CreditCard,
   type LucideIcon,
 } from 'lucide-react';
 import ToastHost from './components/toast/ToastHost';
 import { toast as toastDispatch, type ToastType } from './components/toast/useToast';
-import echoLogoUrl from './assets/echo-logo.png';
 import { AppState, AppTab, SpeechMetrics, Settings as SettingsType } from '../shared/types';
+import { MIC_TEST_ACTIVE_EVENT } from './lib/micTest';
+import { enumerateAudioInputDevices } from './lib/audioDevices';
 import DashboardView from './components/Dashboard';
 import Onboarding from './components/Onboarding';
 import MotionWarmup from './components/MotionWarmup';
-import type { UpdateStatusPayload } from './api';
+import ModalOverlayRoot from './components/ModalOverlayRoot';
+import NotepadView from './components/Notepad';
+import type { AuthSession, BasicUsagePayload, EntitlementsPayload, UpdateStatusPayload } from './api';
+import {
+  MODAL_OVERLAY_FADE,
+  MODAL_PANEL_INITIAL,
+  MODAL_PANEL_OPEN,
+  MODAL_PANEL_EXIT,
+  MODAL_SPRING,
+  MODAL_SPRING_EXIT,
+} from './lib/modalMotion';
 
 type IdleWindow = Window & typeof globalThis & {
   requestIdleCallback?: (callback: () => void) => number;
@@ -34,7 +46,6 @@ let settingsViewImportPromise: Promise<typeof import('./components/Settings')> |
 let historyViewImportPromise: Promise<typeof import('./components/History')> | null = null;
 let snippetsViewImportPromise: Promise<typeof import('./components/Snippets')> | null = null;
 let styleViewImportPromise: Promise<typeof import('./components/Style')> | null = null;
-let insightsViewImportPromise: Promise<typeof import('./components/Insights')> | null = null;
 
 function loadSettingsView() {
   if (!settingsViewImportPromise) {
@@ -68,34 +79,36 @@ function loadStyleView() {
   return styleViewImportPromise;
 }
 
-function loadInsightsView() {
-  if (!insightsViewImportPromise) {
-    insightsViewImportPromise = import('./components/Insights');
-  }
-
-  return insightsViewImportPromise;
-}
-
 const SettingsView = lazy(loadSettingsView);
 const HistoryView = lazy(loadHistoryView);
 const SnippetsView = lazy(loadSnippetsView);
 const StyleView = lazy(loadStyleView);
-const InsightsView = lazy(loadInsightsView);
+
+const SIDEBAR_COMPACT_WIDTH = 64;
+const SIDEBAR_EXPANDED_WIDTH = 232;
+const SIDEBAR_SPRING = {
+  type: 'spring',
+  stiffness: 420,
+  damping: 42,
+  mass: 0.9,
+} as const;
+const SIDEBAR_CONTENT_FADE = {
+  duration: 0.18,
+  ease: [0.22, 1, 0.36, 1],
+} as const;
 
 function SidebarIcon({ icon: Icon }: { icon: LucideIcon }) {
   return (
-    <span className="flex h-7 w-7 items-center justify-center">
-      <Icon
-        size={20}
-        strokeWidth={2}
-        className="text-black"
-      />
-    </span>
+    <Icon
+      size={16}
+      strokeWidth={2}
+      className="text-current"
+    />
   );
 }
 
 function MainPanelSkeleton() {
-  return <div className="h-full w-full bg-background" />;
+  return <div className="h-full w-full bg-popover" />;
 }
 
 function StartupUpdatePrompt({
@@ -122,27 +135,40 @@ function StartupUpdatePrompt({
   const ActionIcon = isReady ? RefreshCw : Download;
 
   return (
-    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/20 px-6 backdrop-blur-[2px]">
-      <div className="w-full max-w-[420px] rounded-2xl border border-border bg-background p-6 shadow-[0_24px_70px_rgba(15,23,42,0.24)]">
+    <ModalOverlayRoot
+      className="fixed inset-0 z-[9998] flex items-center justify-center bg-[hsl(25_18%_12%/0.30)] px-6 backdrop-blur-[2px]"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={MODAL_OVERLAY_FADE}
+    >
+      <motion.div
+        className="echo-standard-modal w-full rounded-2xl border border-border bg-popover shadow-[0_24px_70px_rgba(31,27,22,0.18)] transform-gpu"
+        initial={MODAL_PANEL_INITIAL}
+        animate={MODAL_PANEL_OPEN}
+        exit={{ ...MODAL_PANEL_EXIT, transition: MODAL_SPRING_EXIT }}
+        transition={MODAL_SPRING}
+        style={{ willChange: 'opacity, transform' }}
+      >
         <div className="flex items-start gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[hsl(var(--success-soft))] text-[hsl(var(--success))]">
             {isDownloading ? <Loader2 size={20} className="animate-spin" /> : <ActionIcon size={20} />}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-lg font-semibold text-foreground">{title}</div>
-            <div className="mt-1.5 text-sm leading-6 text-muted-foreground">{body}</div>
+            <div className="echo-modal-title">{title}</div>
+            <div className="echo-modal-description">{body}</div>
             {isDownloading ? (
               <div className="mt-4 h-2 overflow-hidden rounded-full bg-foreground/10">
-                <div className="h-full rounded-full bg-emerald-600 transition-[width]" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
+                <div className="h-full rounded-full bg-[hsl(var(--success))] transition-[width]" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
               </div>
             ) : null}
           </div>
         </div>
-        <div className="mt-6 flex justify-end gap-2">
+        <div className="echo-modal-footer">
           <button
             type="button"
             onClick={onDismiss}
-            className="settings-action-button h-9 rounded-md px-4 text-sm font-medium text-foreground transition-colors"
+            className="echo-btn echo-btn-outline"
           >
             Later
           </button>
@@ -150,14 +176,79 @@ function StartupUpdatePrompt({
             type="button"
             onClick={() => void onAction(action)}
             disabled={pending || isDownloading}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition-colors hover:bg-emerald-800 disabled:cursor-default disabled:opacity-70"
+            className="echo-btn echo-btn-dark disabled:cursor-default disabled:opacity-70"
           >
             {pending || isDownloading ? <Loader2 size={15} className="animate-spin" /> : <ActionIcon size={15} />}
             {isReady ? 'Restart now' : isDownloading ? 'Downloading' : 'Download update'}
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </ModalOverlayRoot>
+  );
+}
+
+function getBasicUsageMessage(payload: BasicUsagePayload): string {
+  if (payload.message) return payload.message;
+  if (payload.remaining > 0) {
+    return `Basic includes ${payload.cap.toLocaleString()} dictated words per week. You have ${payload.remaining.toLocaleString()} left this week. Upgrade to Pro for more.`;
+  }
+  return `You've used all ${payload.cap.toLocaleString()} Basic words for this week. Upgrade to Pro for more.`;
+}
+
+function BasicUsageLimitPrompt({
+  payload,
+  onDismiss,
+  onUpgrade,
+}: {
+  payload: BasicUsagePayload;
+  onDismiss: () => void;
+  onUpgrade: () => void;
+}) {
+  return (
+    <ModalOverlayRoot
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-[hsl(25_18%_12%/0.30)] px-6 backdrop-blur-[2px]"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={MODAL_OVERLAY_FADE}
+    >
+      <motion.div
+        className="echo-standard-modal w-full rounded-2xl border border-border bg-popover shadow-[0_24px_70px_rgba(31,27,22,0.18)] transform-gpu"
+        initial={MODAL_PANEL_INITIAL}
+        animate={MODAL_PANEL_OPEN}
+        exit={{ ...MODAL_PANEL_EXIT, transition: MODAL_SPRING_EXIT }}
+        transition={MODAL_SPRING}
+        style={{ willChange: 'opacity, transform' }}
+      >
+        <div className="flex items-start gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[hsl(var(--brand)/0.12)] text-[hsl(var(--brand))]">
+            <CreditCard size={20} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="echo-modal-title">Upgrade to Pro for more</div>
+            <div className="echo-modal-description">
+              {getBasicUsageMessage(payload)}
+            </div>
+          </div>
+        </div>
+        <div className="echo-modal-footer">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="echo-btn echo-btn-outline"
+          >
+            Not now
+          </button>
+          <button
+            type="button"
+            onClick={onUpgrade}
+            className="echo-btn echo-btn-dark"
+          >
+            Upgrade to Pro
+          </button>
+        </div>
+      </motion.div>
+    </ModalOverlayRoot>
   );
 }
 
@@ -268,15 +359,18 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('dashboard');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSettingsViewMounted, setIsSettingsViewMounted] = useState(false);
+  const [settingsInitialCategory, setSettingsInitialCategory] = useState<string | null>(null);
+  const [basicUsageLimitPrompt, setBasicUsageLimitPrompt] = useState<BasicUsagePayload | null>(null);
   const [isSidebarCompact, setIsSidebarCompact] = useState(false);
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [startupUpdateStatus, setStartupUpdateStatus] = useState<UpdateStatusPayload | null>(null);
   const [isStartupUpdateDismissed, setIsStartupUpdateDismissed] = useState(false);
   const [isStartupUpdateActionPending, setIsStartupUpdateActionPending] = useState(false);
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+  const [entitlements, setEntitlements] = useState<EntitlementsPayload | null>(null);
   const appStateRef = useRef<AppState>('idle');
   const settingsRef = useRef<SettingsType | null>(null);
-  const devicesLoadedRef = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const streamDeviceIdRef = useRef('');
@@ -312,13 +406,9 @@ export default function App() {
     setSettings(nextSettings);
   }, []);
 
-  const ensureDevicesLoaded = useCallback(async () => {
-    if (devicesLoadedRef.current) return;
-
+  const refreshAudioInputDevices = useCallback(async () => {
     try {
-      const all = await navigator.mediaDevices.enumerateDevices();
-      const mics = all.filter((device) => device.kind === 'audioinput');
-      devicesLoadedRef.current = true;
+      const mics = await enumerateAudioInputDevices();
       setDevices(mics);
     } catch (err) {
       console.error('Failed to enumerate devices:', err);
@@ -354,6 +444,13 @@ export default function App() {
     });
   }, []);
 
+  const openPlansSettings = useCallback(() => {
+    setBasicUsageLimitPrompt(null);
+    setSettingsInitialCategory('Plans');
+    warmSettingsView();
+    startTransition(() => setIsSettingsOpen(true));
+  }, [warmSettingsView]);
+
   useEffect(() => {
     if (!window.api) {
       showToast('Electron API not loaded. Preload failed or running in browser.', 'info');
@@ -370,6 +467,22 @@ export default function App() {
         recorderStopTimeoutRef.current = null;
       }
       showToast(msg, 'error');
+      updateAppState('error');
+      setTimeout(() => {
+        updateAppState('idle');
+      }, APP_ERROR_RESET_MS);
+    });
+
+    const unsubBasicUsageLimit = window.api.onBasicUsageLimitReached((payload: BasicUsagePayload) => {
+      if (processingTimeoutRef.current !== null) {
+        window.clearTimeout(processingTimeoutRef.current);
+        processingTimeoutRef.current = null;
+      }
+      if (recorderStopTimeoutRef.current !== null) {
+        window.clearTimeout(recorderStopTimeoutRef.current);
+        recorderStopTimeoutRef.current = null;
+      }
+      setBasicUsageLimitPrompt(payload);
       updateAppState('error');
       setTimeout(() => {
         updateAppState('idle');
@@ -588,6 +701,25 @@ export default function App() {
       clearRecorderStopTimeout();
       recordingIntentRef.current = true;
       const startAttempt = ++startAttemptRef.current;
+
+      try {
+        const usage = await window.api.basicUsageGet();
+        if (usage.exhausted && usage.tier !== 'pro') {
+          recordingIntentRef.current = false;
+          void window.api.cancelRecordingStart?.();
+          setBasicUsageLimitPrompt(usage);
+          updateAppState('idle');
+          return;
+        }
+      } catch (error) {
+        console.warn('Could not check Basic usage before recording:', error);
+      }
+
+      if (!recordingIntentRef.current || startAttempt !== startAttemptRef.current) {
+        updateAppState('idle');
+        return;
+      }
+
       updateAppState('recording');
 
       try {
@@ -824,6 +956,7 @@ export default function App() {
     });
     const unsubNavigate = window.api.onNavigateTab((tab: AppTab) => {
       if (tab === 'settings') {
+        setSettingsInitialCategory(null);
         startTransition(() => setIsSettingsOpen(true));
       } else {
         setActiveTab(tab);
@@ -836,6 +969,34 @@ export default function App() {
       void prewarmAudioGraph();
     }, 8000);
 
+    let micTestSuspendedPrewarm = false;
+
+    const onMicTestActive = (event: Event) => {
+      const active = (event as CustomEvent<{ active: boolean }>).detail?.active;
+      if (active) {
+        if (appStateRef.current === 'recording' || appStateRef.current === 'processing') {
+          return;
+        }
+        micTestSuspendedPrewarm = true;
+        resetAudioLevelVisualization();
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        streamDeviceIdRef.current = '';
+        audioGraphWarmupRef.current = null;
+        audioPrewarmStartedRef.current = false;
+        void teardownAudioGraph();
+        return;
+      }
+
+      if (!micTestSuspendedPrewarm) return;
+      micTestSuspendedPrewarm = false;
+      audioPrewarmStartedRef.current = false;
+      void prewarmAudioGraph();
+      scheduleIdleTeardown();
+    };
+
+    window.addEventListener(MIC_TEST_ACTIVE_EVENT, onMicTestActive);
+
     // `scheduleIdleTeardown` / `handleActivityForIdleTimer` are declared
     // earlier in this effect (above `onStart`) so the hotkey handlers can
     // reference them via closure.
@@ -843,6 +1004,7 @@ export default function App() {
 
     return () => {
       unsubError();
+      unsubBasicUsageLimit();
       unsubStart();
       unsubStop();
       unsubCancel();
@@ -850,6 +1012,7 @@ export default function App() {
       unsubNavigate();
       window.removeEventListener('manual-start-recording', handleManualStart);
       window.removeEventListener('manual-stop-recording', handleManualStop);
+      window.removeEventListener(MIC_TEST_ACTIVE_EVENT, onMicTestActive);
       if (levelIntervalRef.current !== null) {
         window.clearInterval(levelIntervalRef.current);
         levelIntervalRef.current = null;
@@ -924,29 +1087,64 @@ export default function App() {
   }, [applySettingsSnapshot]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    void window.api
+      .authGetSession()
+      .then((session) => {
+        if (!cancelled) setAuthSession(session);
+      })
+      .catch(() => undefined);
+
+    void window.api
+      .entitlementsGet()
+      .then((next) => {
+        if (!cancelled) setEntitlements(next);
+      })
+      .catch(() => undefined);
+
+    const offAuth = window.api.onAuthState((session) => setAuthSession(session));
+    const offEntitlements = window.api.onEntitlementsChanged((next) => setEntitlements(next));
+
+    return () => {
+      cancelled = true;
+      offAuth();
+      offEntitlements();
+    };
+  }, []);
+
+  useEffect(() => {
     const handleDeviceChange = () => {
-      devicesLoadedRef.current = false;
-      void ensureDevicesLoaded();
+      void refreshAudioInputDevices();
+      void window.api.refreshTrayMenu().catch(() => undefined);
     };
 
+    void refreshAudioInputDevices();
     navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
     return () => navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
-  }, [ensureDevicesLoaded]);
+  }, [refreshAudioInputDevices]);
 
   const handleTabClick = useCallback((tab: AppTab) => {
     if (tab === 'settings') {
+      setSettingsInitialCategory(null);
       warmSettingsView();
-      void ensureDevicesLoaded();
+      void refreshAudioInputDevices();
       startTransition(() => setIsSettingsOpen(prev => !prev));
     } else {
       if (tab === 'history') void loadHistoryView();
       if (tab === 'snippets') void loadSnippetsView();
       if (tab === 'style') void loadStyleView();
-      if (tab === 'insights') void loadInsightsView();
       setActiveTab(tab);
       setIsSettingsOpen(false);
     }
-  }, [ensureDevicesLoaded, warmSettingsView]);
+  }, [refreshAudioInputDevices, warmSettingsView]);
+
+  const openSettings = useCallback((category: string | null = null) => {
+    setSettingsInitialCategory(category);
+    warmSettingsView();
+    void refreshAudioInputDevices();
+    startTransition(() => setIsSettingsOpen(true));
+  }, [refreshAudioInputDevices, warmSettingsView]);
 
   useEffect(() => {
     // Warm the Settings chunk on idle so opening Settings later doesn't
@@ -966,10 +1164,21 @@ export default function App() {
   const navItems: Array<{ id: AppTab; label: string; icon: LucideIcon }> = [
     { id: 'dashboard', label: 'Home', icon: Home },
     { id: 'history', label: 'Dictionary', icon: BookOpen },
-    { id: 'snippets', label: 'Snippets', icon: Scissors },
+    { id: 'snippets', label: 'Shortcuts', icon: Pencil },
     { id: 'style', label: 'Style', icon: Type },
-    { id: 'insights', label: 'Insights', icon: BarChart3 },
+    { id: 'notepad', label: 'Notepad', icon: FileText },
   ];
+  const sidebarDisplayName = (() => {
+    if (!authSession) return 'Echo User';
+    const candidate = (authSession.displayName || authSession.email.split('@')[0] || '').trim();
+    return candidate || 'Echo User';
+  })();
+  const sidebarInitial = sidebarDisplayName.charAt(0).toUpperCase() || 'E';
+  const sidebarPlanLabel = (() => {
+    if (entitlements?.tier === 'pro') return 'Pro plan';
+    if (entitlements?.tier === 'free') return 'Basic plan';
+    return 'Basic plan';
+  })();
   const shouldShowStartupUpdatePrompt = !!(
     startupUpdateStatus &&
     !isStartupUpdateDismissed &&
@@ -984,16 +1193,19 @@ export default function App() {
 
       {/* Titlebar drag region — only covers the area above the main panel so it
           doesn't intercept hover/click on the sidebar toggle */}
-      <div
+      <motion.div
         className="titlebar absolute top-0 right-0 z-50 flex h-10 items-center justify-end pr-2"
-        style={{ left: isSidebarCompact ? 52 : 220 }}
+        initial={false}
+        animate={{ left: isSidebarCompact ? SIDEBAR_COMPACT_WIDTH : SIDEBAR_EXPANDED_WIDTH }}
+        transition={SIDEBAR_SPRING}
+        style={{ willChange: 'left' }}
       >
         <div className="no-drag flex items-center">
           <button
             type="button"
             onClick={() => window.api.windowMinimize()}
             aria-label="Minimize window"
-            className="flex h-10 w-11 items-center justify-center rounded-md text-foreground/65 transition-colors hover:bg-black/5 hover:text-foreground"
+            className="flex h-10 w-11 items-center justify-center rounded-lg text-foreground/58 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
           >
             <Minus size={17} />
           </button>
@@ -1001,7 +1213,7 @@ export default function App() {
             type="button"
             onClick={() => window.api.windowToggleMaximize()}
             aria-label="Maximize window"
-            className="flex h-10 w-11 items-center justify-center rounded-md text-foreground/65 transition-colors hover:bg-black/5 hover:text-foreground"
+            className="flex h-10 w-11 items-center justify-center rounded-lg text-foreground/58 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
           >
             <Square size={15} />
           </button>
@@ -1009,21 +1221,23 @@ export default function App() {
             type="button"
             onClick={() => window.api.windowClose()}
             aria-label="Close window"
-            className="flex h-10 w-11 items-center justify-center rounded-md text-foreground/65 transition-colors hover:bg-destructive/10 hover:text-destructive"
+            className="flex h-10 w-11 items-center justify-center rounded-lg text-foreground/58 transition-colors hover:bg-destructive/10 hover:text-destructive"
           >
             <X size={17} />
           </button>
         </div>
-      </div>
+      </motion.div>
 
-      <div className="relative z-[1] flex h-full gap-0 px-1.5 pb-1">
+      <div className="relative z-[1] flex h-full gap-0 px-2 pb-2">
         {/* ── Sidebar ── */}
         <motion.div
           className="relative shrink-0 overflow-hidden"
-          animate={{ width: isSidebarCompact ? 52 : 220 }}
-          transition={{ type: 'spring', stiffness: 520, damping: 42, mass: 0.9 }}
+          initial={false}
+          animate={{ width: isSidebarCompact ? SIDEBAR_COMPACT_WIDTH : SIDEBAR_EXPANDED_WIDTH }}
+          transition={SIDEBAR_SPRING}
+          style={{ willChange: 'width' }}
         >
-          <aside className="relative z-10 flex h-full w-full flex-col px-2 pb-2 pt-2">
+          <aside className="relative z-10 flex h-full w-full flex-col px-2.5 pb-2.5 pt-2">
             {/* Toggle row */}
             <div className="no-drag relative z-[60] mb-2">
               <button
@@ -1031,44 +1245,32 @@ export default function App() {
                 onClick={() => setIsSidebarCompact((current) => !current)}
                 aria-label={isSidebarCompact ? 'Expand sidebar' : 'Collapse sidebar'}
                 title={isSidebarCompact ? 'Expand sidebar' : 'Collapse sidebar'}
-                className="flex h-9 w-9 items-center justify-center rounded-md text-foreground transition-[background-color,transform] duration-150 hover:bg-black/[0.04] active:scale-[0.96] focus:outline-none focus-visible:outline-none focus-visible:ring-0"
+                className="flex h-10 w-10 items-center justify-center rounded-xl text-foreground/70 transition-[background-color,color,transform] duration-150 hover:bg-white hover:text-foreground active:scale-[0.96] focus:outline-none focus-visible:outline-none"
               >
-                <PanelLeft size={18} strokeWidth={2} />
+                <motion.span
+                  className="flex"
+                  initial={false}
+                  animate={{ rotate: isSidebarCompact ? 180 : 0 }}
+                  transition={SIDEBAR_CONTENT_FADE}
+                >
+                  <PanelLeft size={18} strokeWidth={2} />
+                </motion.span>
               </button>
             </div>
 
-            {/* Brand row.
-                Note: the logo PNG carries ~12px of transparent padding inside
-                its 64×64 bounding box, so a literal `gap-2` flex spacing
-                rendered as a ~20px visual gap. We zero the flex gap and pull
-                the wordmark in with a negative margin to absorb most of that
-                transparent padding, leaving a clean ~4px visual gap.
-
-                The whole row is shifted left by -ml-2 so the visible left
-                edge of the logo lines up with the visible left edge of the
-                nav-item icons below (both then sit at x≈12 from the aside
-                edge, since the nav icons are centred inside their h-9 w-9
-                boxes). */}
-            <div className="-ml-2 mb-4 flex h-16 items-center gap-0">
+            <div className="mb-3 flex h-12 items-center">
               <motion.span
-                className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-visible"
-                animate={{ opacity: isSidebarCompact ? 0 : 1, width: isSidebarCompact ? 0 : 64 }}
-                transition={{ type: 'spring', stiffness: 520, damping: 44, mass: 0.8 }}
+                className="echo-wordmark"
+                initial={false}
+                animate={{
+                  maxWidth: isSidebarCompact ? 0 : 160,
+                  opacity: isSidebarCompact ? 0 : 1,
+                  x: isSidebarCompact ? -8 : 0,
+                }}
+                transition={SIDEBAR_CONTENT_FADE}
+                style={{ willChange: 'max-width, opacity, transform', overflow: 'hidden' }}
               >
-                <span className="absolute inset-0 rounded-full bg-indigo-500/10 blur-md" />
-                <img
-                  src={echoLogoUrl}
-                  alt="Echo"
-                  draggable={false}
-                  className="relative h-16 w-16 select-none object-contain"
-                />
-              </motion.span>
-              <motion.span
-                className="-ml-2 whitespace-nowrap text-[24px] font-semibold leading-none tracking-tight text-foreground"
-                style={{ fontFamily: '"Figtree", "Aptos", "Segoe UI Variable Text", "Segoe UI", sans-serif' }}
-                animate={{ opacity: isSidebarCompact ? 0 : 1, width: isSidebarCompact ? 0 : 'auto' }}
-                transition={{ type: 'spring', stiffness: 520, damping: 44, mass: 0.8 }}
-              >
+                <span className="dot" aria-hidden="true" />
                 Echo
               </motion.span>
             </div>
@@ -1084,15 +1286,22 @@ export default function App() {
                     onClick={() => handleTabClick(item.id)}
                     aria-label={item.label}
                     title={isSidebarCompact ? item.label : undefined}
-                    className={`flex h-9 ${isSidebarCompact ? 'w-9' : 'w-full'} items-center overflow-hidden rounded-[4px] text-left text-[14.5px] font-semibold text-foreground transition-colors duration-150 hover:bg-black/[0.04] ${isActive ? 'bg-black/[0.05]' : ''}`}
+                    className={`echo-nav-item ${isActive ? 'active' : ''}`}
+                    style={{ overflow: 'hidden' }}
                   >
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center">
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                       <SidebarIcon icon={item.icon} />
                     </span>
                     <motion.span
-                      className="ml-0.5 whitespace-nowrap"
-                      animate={{ opacity: isSidebarCompact ? 0 : 1, width: isSidebarCompact ? 0 : 'auto' }}
-                      transition={{ type: 'spring', stiffness: 520, damping: 44, mass: 0.8 }}
+                      className="block overflow-hidden whitespace-nowrap"
+                      initial={false}
+                      animate={{
+                        maxWidth: isSidebarCompact ? 0 : 150,
+                        opacity: isSidebarCompact ? 0 : 1,
+                        x: isSidebarCompact ? -6 : 0,
+                      }}
+                      transition={SIDEBAR_CONTENT_FADE}
+                      style={{ willChange: 'max-width, opacity, transform' }}
                     >
                       {item.label}
                     </motion.span>
@@ -1101,43 +1310,79 @@ export default function App() {
               })}
             </nav>
 
-            {/* Subtle separator between primary nav and the Settings entry. */}
-            <div className="mx-3 my-2 h-px bg-black/[0.035]" />
-
-            {/* Settings — pinned to bottom */}
-            <div>
-              <button
-                type="button"
-                onMouseEnter={warmSettingsView}
-                onFocus={warmSettingsView}
-                onClick={() => {
-                  warmSettingsView();
-                  void ensureDevicesLoaded();
-                  startTransition(() => setIsSettingsOpen(true));
-                }}
-                aria-label="Settings"
-                title={isSidebarCompact ? 'Settings' : undefined}
-                className={`flex h-9 ${isSidebarCompact ? 'w-9' : 'w-full'} items-center overflow-hidden rounded-md text-left text-[14.5px] font-semibold text-foreground transition-colors duration-150 hover:bg-black/[0.04] focus:outline-none focus-visible:outline-none focus-visible:ring-0`}
-              >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center">
-                  <SidebarIcon icon={SettingsIcon} />
-                </span>
-                <motion.span
-                  className="ml-1 whitespace-nowrap"
-                  animate={{ opacity: isSidebarCompact ? 0 : 1, width: isSidebarCompact ? 0 : 'auto' }}
-                  transition={{ type: 'spring', stiffness: 520, damping: 44, mass: 0.8 }}
+            {/* Account/settings — pinned to bottom, matches the bundle's
+                user-chip cream pill when expanded; collapses to a single
+                avatar+cog tap target when the sidebar is compact. */}
+            <div className="mt-3 w-full shrink-0">
+              {!isSidebarCompact ? (
+                <motion.div
+                  key="sidebar-account-summary"
+                  className="echo-user-chip"
+                  style={{ width: '100%' }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={SIDEBAR_CONTENT_FADE}
                 >
-                  Settings
-                </motion.span>
-              </button>
+                  <div className="name">{sidebarDisplayName}</div>
+                  <div className="row">
+                    <span className="avatar">
+                      {authSession?.profilePictureDataUrl ? (
+                        <img
+                          src={authSession.profilePictureDataUrl}
+                          alt=""
+                          draggable={false}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        sidebarInitial
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="plan-pill"
+                      onMouseEnter={warmSettingsView}
+                      onFocus={warmSettingsView}
+                      onClick={() => openPlansSettings()}
+                      aria-label="Manage your plan"
+                      title="Manage your plan"
+                    >
+                      {sidebarPlanLabel}
+                    </button>
+                    <button
+                      type="button"
+                      className="theme-toggle"
+                      onMouseEnter={warmSettingsView}
+                      onFocus={warmSettingsView}
+                      onClick={() => openSettings()}
+                      aria-label="Open settings"
+                      title="Open settings"
+                    >
+                      <SettingsIcon size={15} strokeWidth={1.9} />
+                    </button>
+                  </div>
+                </motion.div>
+              ) : (
+                <button
+                  type="button"
+                  onMouseEnter={warmSettingsView}
+                  onFocus={warmSettingsView}
+                  onClick={() => openSettings()}
+                  aria-label="Open settings"
+                  title={`${sidebarDisplayName} · ${sidebarPlanLabel}`}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl"
+                  style={{ color: 'var(--ink-soft)' }}
+                >
+                  <SettingsIcon size={18} strokeWidth={2} />
+                </button>
+              )}
             </div>
 
           </aside>
         </motion.div>
 
         {/* ── Main Panel ── */}
-        <div className="flex min-w-0 flex-1 flex-col pt-10 pr-1">
-        <main className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-black/[0.09] bg-background">
+        <div className="flex min-w-0 flex-1 flex-col pt-10 pr-0">
+        <main className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[24px] border border-border bg-popover shadow-[0_18px_60px_-44px_rgba(15,23,42,0.42)]">
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <div className="absolute inset-0">
               {activeTab === 'dashboard' && <DashboardView settings={settings} />}
@@ -1145,7 +1390,7 @@ export default function App() {
                 {activeTab === 'history' && <HistoryView />}
                 {activeTab === 'snippets' && <SnippetsView />}
                 {activeTab === 'style' && <StyleView />}
-                {activeTab === 'insights' && <InsightsView />}
+                {activeTab === 'notepad' && <NotepadView />}
               </Suspense>
             </div>
           </div>
@@ -1158,22 +1403,30 @@ export default function App() {
             <SettingsView
               key="settings-view"
               isOpen={isSettingsOpen}
-              onClose={() => setIsSettingsOpen(false)}
+              initialCategory={settingsInitialCategory}
+              onClose={() => {
+                setIsSettingsOpen(false);
+                setSettingsInitialCategory(null);
+              }}
               settings={settings}
               devices={devices}
+              onRefreshDevices={refreshAudioInputDevices}
               onUpdateSettings={handleUpdateSettings}
             />
           )}
         </Suspense>
 
         {/* Onboarding */}
-        {settings && !settings.onboardingComplete && (
-          <Onboarding
-            settings={settings}
-            devices={devices}
-            onComplete={(updates) => handleUpdateSettings(updates)}
-          />
-        )}
+        <AnimatePresence initial={false}>
+          {settings && !settings.onboardingComplete && (
+            <Onboarding
+              key="onboarding"
+              settings={settings}
+              devices={devices}
+              onComplete={(updates) => handleUpdateSettings(updates)}
+            />
+          )}
+        </AnimatePresence>
 
         {/* Toast host — stack of bottom-right notifications. Listens for
             both the new `echo:toast` channel and the legacy `show-toast`
@@ -1181,14 +1434,28 @@ export default function App() {
         <ToastHost />
       </div>
 
-      {shouldShowStartupUpdatePrompt && startupUpdateStatus ? (
-        <StartupUpdatePrompt
-          status={startupUpdateStatus}
-          pending={isStartupUpdateActionPending}
-          onDismiss={() => setIsStartupUpdateDismissed(true)}
-          onAction={handleStartupUpdateAction}
-        />
-      ) : null}
+      <AnimatePresence initial={false}>
+        {shouldShowStartupUpdatePrompt && startupUpdateStatus ? (
+          <StartupUpdatePrompt
+            key="startup-update-prompt"
+            status={startupUpdateStatus}
+            pending={isStartupUpdateActionPending}
+            onDismiss={() => setIsStartupUpdateDismissed(true)}
+            onAction={handleStartupUpdateAction}
+          />
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence initial={false}>
+        {basicUsageLimitPrompt ? (
+          <BasicUsageLimitPrompt
+            key="basic-usage-prompt"
+            payload={basicUsageLimitPrompt}
+            onDismiss={() => setBasicUsageLimitPrompt(null)}
+            onUpgrade={openPlansSettings}
+          />
+        ) : null}
+      </AnimatePresence>
 
     </div>
   );

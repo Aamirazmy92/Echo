@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, ArrowUpDown, Check, Pencil, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowRight, ArrowUpDown, Check, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { DictionaryItem, DictionaryItemInput } from '../../shared/types';
 import ConfirmationModal from './ConfirmationModal';
 import { Dialog, DialogContent } from './ui/dialog';
+import { Popover, PopoverContent } from './ui/popover';
 import { toast } from './toast/useToast';
+import { rowActionsClassName } from '../lib/rowActions';
 
 type DictionaryScope = 'all' | 'personal';
 type SortMode = 'newest' | 'oldest' | 'alphabetical';
@@ -21,6 +23,29 @@ const emptyDraft: DictionaryDraft = {
   editKind: 'word',
 };
 
+const SORT_OPTIONS: Array<{ id: SortMode; label: string }> = [
+  { id: 'newest', label: 'Newest first' },
+  { id: 'oldest', label: 'Oldest first' },
+  { id: 'alphabetical', label: 'Alphabetical (A-Z)' },
+];
+
+const SORT_LABELS: Record<SortMode, string> = {
+  newest: 'Newest first',
+  oldest: 'Oldest first',
+  alphabetical: 'Alphabetical',
+};
+
+function formatRelativeFromNow(ts: number, now: number): string {
+  const delta = Math.max(0, now - ts);
+  const minutes = Math.floor(delta / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+}
+
 export default function HistoryView() {
   const [items, setItems] = useState<DictionaryItem[]>([]);
   const [scope, setScope] = useState<DictionaryScope>('all');
@@ -31,12 +56,21 @@ export default function HistoryView() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSortOpen, setIsSortOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DictionaryItem | null>(null);
-  const sortMenuRef = useRef<HTMLDivElement | null>(null);
+  const [lastLoadAt, setLastLoadAt] = useState<number>(() => Date.now());
+  const [now, setNow] = useState<number>(() => Date.now());
 
   const load = async () => {
     const data = await window.api.getDictionaryItems();
     setItems(data);
+    setLastLoadAt(Date.now());
   };
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const lastSyncLabel = formatRelativeFromNow(lastLoadAt, now);
 
   useEffect(() => {
     void load();
@@ -53,19 +87,6 @@ export default function HistoryView() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isModalOpen]);
-
-  useEffect(() => {
-    if (!isSortOpen) return;
-
-    const handleClickOutside = (event: MouseEvent) => {
-      if (!sortMenuRef.current?.contains(event.target as Node)) {
-        setIsSortOpen(false);
-      }
-    };
-
-    window.addEventListener('mousedown', handleClickOutside);
-    return () => window.removeEventListener('mousedown', handleClickOutside);
-  }, [isSortOpen]);
 
   const visibleItems = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -169,109 +190,203 @@ export default function HistoryView() {
 
   const isReplacementDraft = draft.editKind === 'replacement' || draft.correctMisspelling;
 
-  return (
-    <div className="page-shell static-click-buttons">
-      {/* Page header */}
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">Personal dictionary</h1>
-          <p className="page-subtitle">
-            Teach Echo the words that matter to you — names, product terms, and
-            spellings Echo quietly corrects while you talk.
-          </p>
-        </div>
-        <button type="button" onClick={openCreate} className="btn-primary transition-transform duration-100 active:scale-[0.98]">
-          Add new
-        </button>
-      </div>
+  const personalCount = items.filter((i) => !i.shared).length;
 
-      {/* Tabs + Toolbar */}
-      <div className="mb-4 flex items-end justify-between border-b border-border pb-0">
-        <div className="flex gap-5">
-          <ScopeTab label="All" active={scope === 'all'} onClick={() => setScope('all')} />
-          <ScopeTab label="Personal" active={scope === 'personal'} onClick={() => setScope('personal')} />
-        </div>
-        <div className="mb-3 flex items-center gap-2">
-          <div className="flex h-10 items-center gap-2 rounded-lg border border-border bg-background/60 px-3">
-            <Search size={16} className="text-muted-foreground" />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search dictionary..."
-              className="w-[200px] border-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-            />
-          </div>
-          <div className="relative" ref={sortMenuRef}>
-            <button
-              type="button"
-              title="Sort"
-              onClick={() => setIsSortOpen((c) => !c)}
-              className="btn-ghost-icon"
-            >
-              <ArrowUpDown size={12} />
-            </button>
-            {isSortOpen && (
-              <SortMenu active={sortMode} onSelect={(s) => { setSortMode(s); setIsSortOpen(false); }} />
-            )}
+  return (
+    <div className="echo-pane-inner static-click-buttons">
+      {/* Pane header — serif title + lede, primary action on the right. */}
+      <div style={{ marginBottom: 28 }}>
+        <div
+          className="flex items-start justify-between gap-6"
+        >
+          <div style={{ maxWidth: 560 }}>
+            <h1 className="echo-h-display">Personal dictionary</h1>
+            <p className="echo-lede" style={{ marginTop: 12, marginBottom: 0 }}>
+              Teach Echo the words that matter to you — names, product terms, spellings.
+              Echo quietly corrects them while you talk.
+            </p>
           </div>
           <button
             type="button"
-            title="Refresh"
-            onClick={() => void load()}
-            className="btn-ghost-icon"
+            onClick={openCreate}
+            className="echo-btn echo-btn-dark"
           >
-            <RefreshCw size={12} />
+            <Plus size={14} /> Add word
+          </button>
+        </div>
+      </div>
+
+      {/* Tabs + Toolbar */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginTop: 8,
+          marginBottom: 16,
+          gap: 12,
+          flexWrap: 'wrap',
+        }}
+      >
+        <div className="echo-tabs">
+          <button
+            type="button"
+            className={scope === 'all' ? 'active' : ''}
+            onClick={() => setScope('all')}
+          >
+            All <span style={{ color: 'var(--ink-muted)', marginLeft: 4 }}>· {items.length}</span>
+          </button>
+          <button
+            type="button"
+            className={scope === 'personal' ? 'active' : ''}
+            onClick={() => setScope('personal')}
+          >
+            Personal <span style={{ color: 'var(--ink-muted)', marginLeft: 4 }}>· {personalCount}</span>
+          </button>
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div className="echo-search">
+            <Search size={14} style={{ color: 'var(--ink-muted)' }} />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search dictionary…"
+            />
+          </div>
+
+          <Popover open={isSortOpen} onOpenChange={setIsSortOpen} align="end">
+            <button
+              type="button"
+              onClick={() => setIsSortOpen((c) => !c)}
+              title="Sort entries"
+              aria-label="Sort entries"
+              aria-haspopup="menu"
+              aria-expanded={isSortOpen}
+              className="echo-btn echo-btn-outline"
+            >
+              <ArrowUpDown size={13} />
+              {SORT_LABELS[sortMode]}
+            </button>
+
+            <PopoverContent className="w-[180px] p-1">
+              {SORT_OPTIONS.map((option) => (
+                <SortMenuButton
+                  key={option.id}
+                  label={option.label}
+                  active={sortMode === option.id}
+                  onClick={() => { setSortMode(option.id); setIsSortOpen(false); }}
+                />
+              ))}
+            </PopoverContent>
+          </Popover>
+
+          <button
+            type="button"
+            onClick={() => void load()}
+            title="Refresh"
+            aria-label="Refresh"
+            className="echo-icon-btn"
+          >
+            <RefreshCw size={14} />
           </button>
         </div>
       </div>
 
       {/* List */}
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
-          {visibleItems.length > 0 ? (
-            <div>
-              {visibleItems.map((item) => {
-                const isReplacement = Boolean(item.correctMisspelling && item.misspelling?.trim());
-                return (
-                  <div key={item.id} className="group flex items-center border-b border-border/50 px-5 py-3.5 transition-colors last:border-0 hover:bg-accent/50">
-                    <div className="min-w-0 flex-1">
-                      {isReplacement ? (
-                        <div className="flex items-center gap-2.5 text-sm">
-                          <span className="max-w-[200px] truncate text-muted-foreground line-through">{item.misspelling}</span>
-                          <ArrowRight size={12} className="shrink-0 text-muted-foreground" />
-                          <span className="truncate font-medium text-foreground">{item.phrase}</span>
-                        </div>
-                      ) : (
-                        <span className="text-sm font-medium text-foreground">{item.phrase}</span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                      <button title="Edit" onClick={() => openEdit(item)} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil size={14} /></button>
-                      <button title="Delete" onClick={() => setDeleteTarget(item)} className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 size={14} /></button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="py-16 text-center">
-              <Search size={24} className="mx-auto mb-3 text-muted-foreground" />
-              <p className="text-sm font-medium text-foreground">{search ? 'No entries match that search.' : 'Your dictionary is empty.'}</p>
-              <p className="mt-1.5 text-xs text-muted-foreground">Add preferred spellings or replacements for dictated text.</p>
-            </div>
-          )}
+      <div className="echo-card">
+        {visibleItems.length > 0 ? (
+          visibleItems.map((item) => {
+            const isReplacement = Boolean(item.correctMisspelling && item.misspelling?.trim());
+            const isRowActive =
+              deleteTarget?.id === item.id ||
+              (isModalOpen && editorMode === 'edit' && draft.id === item.id);
+            return (
+              <div key={item.id} className="echo-entry-row group">
+                <div className="term">
+                  {isReplacement ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      <span
+                        style={{
+                          color: 'var(--ink-muted)',
+                          textDecoration: 'line-through',
+                          fontSize: 15.5,
+                        }}
+                      >
+                        {item.misspelling}
+                      </span>
+                      <ArrowRight size={12} style={{ color: 'var(--ink-muted)' }} />
+                      <span>{item.phrase}</span>
+                    </span>
+                  ) : (
+                    item.phrase
+                  )}
+                </div>
+                <div className={rowActionsClassName(isRowActive)}>
+                    <button
+                      type="button"
+                      title="Edit"
+                      onClick={() => openEdit(item)}
+                      className="echo-icon-btn plain"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      title="Delete"
+                      onClick={() => setDeleteTarget(item)}
+                      className="echo-icon-btn plain"
+                      style={{ color: 'var(--ink-soft)' }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div
+            style={{
+              padding: '64px 28px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              textAlign: 'center',
+              gap: 6,
+            }}
+          >
+            <Search size={24} style={{ color: 'var(--ink-muted)', marginBottom: 6 }} />
+            <p style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)' }}>
+              {search ? 'No entries match that search.' : 'Your dictionary is empty.'}
+            </p>
+            <p style={{ marginTop: 4, fontSize: 13, color: 'var(--ink-soft)' }}>
+              Add preferred spellings or replacements for dictated text.
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          marginTop: 18,
+          fontSize: 12.5,
+          color: 'var(--ink-muted)',
+          textAlign: 'center',
+        }}
+      >
+        Synced across devices · Last update {lastSyncLabel}
       </div>
 
       {/* Create/Edit Modal — shared Framer Motion Dialog for snappy open/close. */}
       <Dialog open={isModalOpen} onOpenChange={(next) => { if (!next) closeModal(); }}>
-        <DialogContent animation="pop" className="max-w-lg" onClose={closeModal}>
+        <DialogContent animation="pop" onClose={closeModal}>
           <form onSubmit={saveItem}>
-            <div className="mb-5">
-              <h2 className="text-[15px] font-semibold text-foreground">
+            <div className="echo-modal-header">
+              <h2 className="echo-modal-title">
                 {editorMode === 'edit' ? (isReplacementDraft ? 'Edit replacement' : 'Edit word') : 'Add to vocabulary'}
               </h2>
             </div>
 
-            <div className="space-y-4">
+            <div className="echo-modal-body">
               {editorMode === 'create' && (
                 <LabeledSwitch
                   label="Correct a misspelling"
@@ -289,16 +404,16 @@ export default function HistoryView() {
 
               {isReplacementDraft ? (
                 <div className="grid items-center gap-3 md:grid-cols-[1fr_20px_1fr]">
-                  <input autoFocus value={draft.misspelling ?? ''} onChange={(e) => setDraft((c) => ({ ...c, misspelling: e.target.value }))} placeholder="Misspelling" className="h-9 rounded-lg border-2 border-border bg-background/60 px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring" />
-                  <ArrowRight size={14} className="mx-auto text-muted-foreground" />
-                  <input value={draft.phrase} onChange={(e) => setDraft((c) => ({ ...c, phrase: e.target.value }))} placeholder="Correct spelling" className="h-9 rounded-lg border-2 border-border bg-background/60 px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring" />
+                  <input autoFocus value={draft.misspelling ?? ''} onChange={(e) => setDraft((c) => ({ ...c, misspelling: e.target.value }))} placeholder="Misspelling" className="echo-composer-input" />
+                  <ArrowRight size={16} className="mx-auto text-muted-foreground" />
+                  <input value={draft.phrase} onChange={(e) => setDraft((c) => ({ ...c, phrase: e.target.value }))} placeholder="Correct spelling" className="echo-composer-input" />
                 </div>
               ) : (
-                <input autoFocus value={draft.phrase} onChange={(e) => setDraft((c) => ({ ...c, phrase: e.target.value }))} placeholder="Add a new word" className="h-9 w-full rounded-lg border-2 border-border bg-background/60 px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring" />
+                <input autoFocus value={draft.phrase} onChange={(e) => setDraft((c) => ({ ...c, phrase: e.target.value }))} placeholder="Add a new word" className="echo-composer-input" />
               )}
             </div>
 
-            <div className="mt-5 flex justify-end gap-2">
+            <div className="echo-modal-footer">
               <button type="button" onClick={closeModal} className="btn-secondary">Cancel</button>
               <button type="submit" disabled={!draft.phrase.trim() || (isReplacementDraft && !(draft.misspelling ?? '').trim())} className="btn-primary">
                 {editorMode === 'edit' ? 'Save changes' : 'Add word'}
@@ -320,48 +435,31 @@ export default function HistoryView() {
   );
 }
 
-function ScopeTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+function SortMenuButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`relative pb-2.5 text-sm font-medium transition-colors ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+      className="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-accent"
     >
-      {label}
-      {active && <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-foreground" />}
+      <span>{label}</span>
+      {active ? <Check size={13} className="text-foreground" /> : null}
     </button>
-  );
-}
-
-function SortMenu({ active, onSelect }: { active: SortMode; onSelect: (s: SortMode) => void }) {
-  const options: Array<{ id: SortMode; label: string }> = [
-    { id: 'newest', label: 'Newest first' },
-    { id: 'oldest', label: 'Oldest first' },
-    { id: 'alphabetical', label: 'Alphabetical (A-Z)' },
-  ];
-
-  return (
-    <div className="absolute right-0 top-full z-20 mt-1 w-[180px] overflow-hidden rounded-xl border border-border bg-background p-1 shadow-lg">
-      <div className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Sort by</div>
-      {options.map((option) => (
-        <button
-          key={option.id}
-          type="button"
-          onClick={() => onSelect(option.id)}
-          className="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs font-medium text-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
-        >
-          {option.label}
-          {active === option.id && <Check size={13} className="text-foreground" />}
-        </button>
-      ))}
-    </div>
   );
 }
 
 function LabeledSwitch({ checked, label, onChange }: { checked: boolean; label: string; onChange: (c: boolean) => void }) {
   return (
-    <div className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-4 py-3">
-      <span className="text-sm font-medium text-foreground">{label}</span>
+    <div className="echo-composer-switch-row flex items-center justify-between rounded-xl border border-border bg-popover">
+      <span className="echo-composer-switch-label">{label}</span>
       <button
         type="button"
         role="switch"
@@ -370,7 +468,7 @@ function LabeledSwitch({ checked, label, onChange }: { checked: boolean; label: 
         className={`relative h-[22px] w-[40px] shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${checked ? 'bg-primary' : 'bg-foreground/15'}`}
       >
         <span
-          className="pointer-events-none absolute left-0 top-[2px] h-[18px] w-[18px] rounded-full bg-white shadow-sm transition-transform duration-150 ease-out"
+          className="pointer-events-none absolute left-0 top-[2px] h-[18px] w-[18px] rounded-full bg-popover shadow-sm transition-transform duration-150 ease-out"
           style={{ transform: checked ? 'translateX(20px)' : 'translateX(2px)' }}
         />
       </button>

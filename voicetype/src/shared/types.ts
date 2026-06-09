@@ -1,6 +1,6 @@
 export type AppState = 'idle' | 'recording' | 'processing' | 'success' | 'error'
 export type ThemeMode = 'light' | 'dark'
-export type AppTab = 'dashboard' | 'history' | 'snippets' | 'style' | 'insights' | 'settings'
+export type AppTab = 'dashboard' | 'history' | 'snippets' | 'style' | 'notepad' | 'settings'
 export type StyleCategory = 'personal' | 'work' | 'email' | 'other'
 export type GlobalStyleId = 'formal' | 'casual' | 'very_casual' | 'concise' | 'code' | 'excited'
 export type StyleToneId = string
@@ -73,6 +73,21 @@ export interface SnippetInput {
   shared: boolean
 }
 
+export interface Note {
+  id: number
+  title: string
+  body: string
+  createdAt: string
+  updatedAt: string
+  pinned: boolean
+}
+
+export interface NoteInput {
+  id?: number
+  title: string
+  body: string
+}
+
 export interface DictionaryItem {
   id: number
   phrase: string                // preferred spelling/casing, e.g. "Echo"
@@ -97,6 +112,13 @@ export interface IpcChannels {
   'suspend-hotkey': () => void
   'resume-hotkey': () => Settings
   'get-history': (limit: number, offset: number) => DictationEntry[]
+  'basic-usage-get': () => {
+    tier: 'anonymous' | 'free' | 'pro'
+    used: number
+    cap: number
+    remaining: number
+    exhausted: boolean
+  }
   'update-history-entry': (id: number, text: string) => DictationEntry | null
   'delete-history-entry': (id: number) => void
   'clear-history': () => void
@@ -113,6 +135,14 @@ export interface IpcChannels {
   // main -> renderer (events)
   'state-changed': (state: AppState) => void
   'transcription-result': (entry: DictationEntry | null) => void
+  'basic-usage-limit-reached': (payload: {
+    tier: 'anonymous' | 'free' | 'pro'
+    used: number
+    cap: number
+    remaining: number
+    exhausted: boolean
+    message: string
+  }) => void
   'error': (message: string) => void
   'navigate-tab': (tab: AppTab) => void
 

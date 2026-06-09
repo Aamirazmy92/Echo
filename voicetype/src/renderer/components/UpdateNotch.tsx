@@ -103,7 +103,7 @@ export default function UpdateNotch({ compact }: UpdateNotchProps) {
         disabled={isDownloading || isActing}
         aria-label={view.action ?? view.title}
         title={view.action ?? view.title}
-        className="mb-2 flex h-9 w-9 items-center justify-center rounded-md bg-emerald-50 text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-default disabled:opacity-80"
+        className="mb-2 flex h-9 w-9 items-center justify-center rounded-md bg-[hsl(var(--success-soft))] text-[hsl(var(--success))] transition-colors hover:bg-[hsl(var(--success)/0.22)] disabled:cursor-default disabled:opacity-80"
       >
         <Icon size={18} className={isDownloading ? 'animate-spin' : undefined} />
       </button>
@@ -111,20 +111,20 @@ export default function UpdateNotch({ compact }: UpdateNotchProps) {
   }
 
   return (
-    <section className="mb-2 rounded-[8px] border border-emerald-900/10 bg-emerald-50/85 px-3 py-2.5 text-emerald-950 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+    <section className="mb-2 rounded-[8px] border border-border bg-[hsl(var(--success-soft))] px-3 py-2.5 text-foreground shadow-[0_1px_2px_rgba(31,27,22,0.04)]">
       <div className="flex items-start gap-2.5">
-        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/75 text-emerald-700">
+        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-popover/85 text-[hsl(var(--success))]">
           <Icon size={17} className={isDownloading ? 'animate-spin' : undefined} />
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-semibold leading-4">{view.title}</p>
-          <p className="mt-0.5 truncate text-[12px] font-medium leading-4 text-emerald-950/68">{view.body}</p>
+          <p className="mt-0.5 truncate text-[12px] font-medium leading-4 text-foreground/70">{view.body}</p>
           {view.action && (
             <button
               type="button"
               onClick={handleClick}
               disabled={isActing}
-              className="mt-2 inline-flex h-7 items-center justify-center rounded-[5px] bg-emerald-700 px-2.5 text-[12px] font-semibold text-white transition-colors hover:bg-emerald-800 disabled:cursor-default disabled:opacity-70"
+              className="mt-2 inline-flex h-7 items-center justify-center rounded-[5px] bg-primary px-2.5 text-[12px] font-semibold text-primary-foreground transition-colors hover:brightness-95 disabled:cursor-default disabled:opacity-70"
             >
               {isActing ? 'Starting...' : view.action}
             </button>

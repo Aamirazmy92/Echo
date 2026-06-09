@@ -1,16 +1,14 @@
 import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic, Keyboard, Sparkles, ChevronRight, Check, Pencil, X } from 'lucide-react';
+import { Mic, ArrowLeft, ArrowRight, Check, Pencil } from 'lucide-react';
 import { Settings } from '../../shared/types';
-import { DEFAULT_PUSH_TO_TALK_HOTKEY, DEFAULT_TOGGLE_HOTKEY, formatHotkeyLabel, normalizeHotkeyAccelerator } from '../../shared/hotkey';
-import { fadeTransition, panelTransition } from '../lib/motion';
 import {
-  MODAL_CLOSE_TRANSITION,
-  MODAL_OPEN_TRANSITION,
-  MODAL_PANEL_EXIT,
-  MODAL_PANEL_INITIAL,
-  MODAL_PANEL_OPEN,
-} from '../lib/modalMotion';
+  DEFAULT_PUSH_TO_TALK_HOTKEY,
+  DEFAULT_TOGGLE_HOTKEY,
+  formatHotkeyLabel,
+  normalizeHotkeyAccelerator,
+} from '../../shared/hotkey';
+import { fadeTransition } from '../lib/motion';
 
 interface OnboardingProps {
   settings: Settings;
@@ -18,154 +16,90 @@ interface OnboardingProps {
   onComplete: (updates: Partial<Settings>) => void;
 }
 
-const STEPS = [
-  {
-    id: 'welcome',
-    title: 'Welcome to Echo',
-    description: 'Echo lets you dictate text into any application on your computer using your voice.',
-  },
-  {
-    id: 'microphone',
-    title: 'Choose your microphone',
-    description: 'Select the microphone you want to use for dictation.',
-  },
-  {
-    id: 'hotkey',
-    title: 'Set your hotkey',
-    description: 'Echo uses a hotkey to start and stop dictation. Choose your preferred mode below.',
-  },
-  {
-    id: 'ready',
-    title: 'You\'re all set!',
-    description: 'Hold your hotkey to start dictating. Release to stop. The transcribed text will appear in whatever app you\'re using.',
-  },
-];
+// Full-screen onboarding modelled on the bundled Echo Redesign.
+// Five steps: Welcome → Shortcut → Microphone → Tone → Ready. Each step
+// fills the pane, with a fine progress bar across the top and a Back /
+// Continue rail across the bottom.
+const STEPS = ['welcome', 'shortcut', 'microphone', 'tone', 'ready'] as const;
+
+type StepId = (typeof STEPS)[number];
 
 function HotkeyTokens({ label, subdued = false }: { label: string; subdued?: boolean }) {
-  const tokens = label.split(' + ');
+  const tokens = label.split('+').map((t) => t.trim()).filter(Boolean);
   return (
-    <div className="flex items-center gap-1">
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
       {tokens.map((token, i) => (
-        <span
-          key={i}
-          className={`theme-kbd flex items-center px-2 py-1 text-[13px] font-semibold ${subdued ? 'opacity-50' : ''}`}
-        >
-          {token}
+        <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <kbd className={`echo-kbd echo-kbd-lg ${subdued ? 'opacity-50' : ''}`}>{token}</kbd>
+          {i < tokens.length - 1 && (
+            <span style={{ color: 'var(--ink-muted)', fontSize: 12 }}>+</span>
+          )}
         </span>
       ))}
-    </div>
-  );
-}
-
-function ShortcutCard({
-  target,
-  title,
-  description,
-  hotkeys,
-  captureTarget,
-  message,
-  onCapture,
-  onRemove,
-}: {
-  target: 'toggleHotkey' | 'pushToTalkHotkey';
-  title: string;
-  description: string;
-  hotkeys: string[];
-  captureTarget: { field: string; index: number } | null;
-  message?: string;
-  onCapture: (target: 'toggleHotkey' | 'pushToTalkHotkey', index: number) => void;
-  onRemove: (target: 'toggleHotkey' | 'pushToTalkHotkey', index: number) => void;
-}) {
-  const isAppending = captureTarget?.field === target && captureTarget.index === hotkeys.length;
-  const displayedHotkeys = isAppending ? [...hotkeys, ''] : hotkeys;
-
-  return (
-    <section className="theme-card-soft rounded-[16px] px-6 py-5">
-      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_246px] md:items-start">
-        <div className="min-w-0">
-          <div className="text-[14px] font-semibold text-[color:var(--text-primary)]">{title}</div>
-          <div className="mt-1 max-w-[330px] text-[13px] text-[color:var(--text-muted)]">{description}</div>
-          {message ? (
-            <div className="mt-2 text-[12px] font-medium text-[color:var(--text-muted)]">{message}</div>
-          ) : null}
-        </div>
-
-        <div className="space-y-2.5 md:justify-self-end">
-          {displayedHotkeys.map((hotkey, index) => {
-            const isCapturing = captureTarget?.field === target && captureTarget.index === index;
-            const canRemove = hotkeys.length > 1 && index < hotkeys.length;
-
-            return (
-              <div key={`${target}-${hotkey || 'pending'}-${index}`} className="flex items-stretch gap-2">
-                <button
-                  type="button"
-                  onMouseDown={(event: React.MouseEvent) => event.preventDefault()}
-                  onClick={() => onCapture(target, index)}
-                  className={`w-full min-w-[246px] rounded-md border px-3 py-2 text-left transition-all ${
-                    isCapturing
-                      ? 'theme-selected-surface border-[color:var(--border-strong)] bg-[rgba(121,192,255,0.08)]'
-                      : 'border-[color:var(--border-soft)] bg-[rgba(24,35,56,0.96)] hover:border-[rgba(121,192,255,0.28)] hover:bg-[rgba(121,192,255,0.08)]'
-                  }`}
-                >
-                  <div className="flex min-h-[24px] items-center justify-between gap-3">
-                    <HotkeyTokens label={isCapturing ? 'Press keys...' : formatHotkeyLabel(hotkey)} subdued={isCapturing} />
-                    <Pencil size={14} className={`${isCapturing ? 'text-[color:var(--accent)]' : 'text-[color:var(--text-faint)]'} shrink-0`} />
-                  </div>
-                </button>
-
-                {canRemove ? (
-                  <button
-                    type="button"
-                    onMouseDown={(event: React.MouseEvent) => event.preventDefault()}
-                    onClick={() => onRemove(target, index)}
-                    className="theme-icon-button self-center rounded-full p-1.5"
-                    aria-label="Remove shortcut"
-                  >
-                    <X size={14} />
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </section>
+    </span>
   );
 }
 
 export default function Onboarding({ settings, devices, onComplete }: OnboardingProps) {
-  const [step, setStep] = useState(0);
+  const [stepIndex, setStepIndex] = useState(0);
   const [selectedMic, setSelectedMic] = useState(settings.microphoneId ?? '');
-  const [selectedMicLabel, setSelectedMicLabel] = useState(settings.microphoneLabel ?? 'Default microphone');
-  const [pushToTalkHotkey, setPushToTalkHotkey] = useState<string[]>(settings.pushToTalkHotkey ?? [DEFAULT_PUSH_TO_TALK_HOTKEY]);
-  const [toggleHotkey, setToggleHotkey] = useState<string[]>(settings.toggleHotkey ?? [DEFAULT_TOGGLE_HOTKEY]);
-  const [captureTarget, setCaptureTarget] = useState<{ field: 'toggleHotkey' | 'pushToTalkHotkey'; index: number } | null>(null);
-  const [hotkeyMessage, setHotkeyMessage] = useState('');
-  const [isClosing, setIsClosing] = useState(false);
+  const [selectedMicLabel, setSelectedMicLabel] = useState(
+    settings.microphoneLabel ?? 'Default microphone'
+  );
+  const [pushToTalkHotkey, setPushToTalkHotkey] = useState<string[]>(
+    settings.pushToTalkHotkey ?? [DEFAULT_PUSH_TO_TALK_HOTKEY]
+  );
+  const [toggleHotkey, setToggleHotkey] = useState<string[]>(
+    settings.toggleHotkey ?? [DEFAULT_TOGGLE_HOTKEY]
+  );
+  const [captureTarget, setCaptureTarget] = useState<{
+    field: 'toggleHotkey' | 'pushToTalkHotkey';
+    index: number;
+  } | null>(null);
+  const [tested, setTested] = useState(false);
+  const [recordingPulse, setRecordingPulse] = useState(false);
 
-  const current = STEPS[step];
-  const isLast = step === STEPS.length - 1;
+  const stepId: StepId = STEPS[stepIndex];
+  const isLast = stepIndex === STEPS.length - 1;
 
-  const handleNext = useCallback(() => {
-    if (isClosing) return;
+  const goNext = useCallback(() => {
     if (isLast) {
       if (captureTarget) {
         window.api.resumeHotkey();
         setCaptureTarget(null);
       }
-      setIsClosing(true);
+      onComplete({
+        onboardingComplete: true,
+        microphoneId: selectedMic,
+        microphoneLabel: selectedMicLabel,
+        pushToTalkHotkey,
+        toggleHotkey,
+      });
     } else {
-      setStep(s => s + 1);
+      setStepIndex((s) => s + 1);
     }
-  }, [isLast, isClosing, captureTarget]);
+  }, [
+    captureTarget,
+    isLast,
+    onComplete,
+    pushToTalkHotkey,
+    selectedMic,
+    selectedMicLabel,
+    toggleHotkey,
+  ]);
 
-  const handleMicSelect = (deviceId: string, label: string) => {
-    setSelectedMic(deviceId);
-    setSelectedMicLabel(label);
-  };
+  const goPrev = useCallback(() => {
+    if (captureTarget) {
+      window.api.resumeHotkey();
+      setCaptureTarget(null);
+    }
+    setStepIndex((s) => Math.max(0, s - 1));
+  }, [captureTarget]);
 
-  const handleCapture = async (target: 'toggleHotkey' | 'pushToTalkHotkey', index: number) => {
-    setHotkeyMessage('');
+  const handleCapture = async (
+    target: 'toggleHotkey' | 'pushToTalkHotkey',
+    index: number
+  ) => {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
@@ -173,7 +107,6 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
     if (captureTarget?.field === target && captureTarget.index === index) {
       await window.api.resumeHotkey();
       setCaptureTarget(null);
-      setHotkeyMessage('Hotkey capture cancelled.');
       return;
     }
 
@@ -185,42 +118,13 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
     setCaptureTarget({ field: target, index });
   };
 
-  const handleRemove = async (target: 'toggleHotkey' | 'pushToTalkHotkey', index: number) => {
-    const currentHotkeys = target === 'pushToTalkHotkey' ? pushToTalkHotkey : toggleHotkey;
-    if (currentHotkeys.length <= 1) return;
-
-    if (captureTarget?.field === target && captureTarget.index === index) {
-      await window.api.resumeHotkey();
-      setCaptureTarget(null);
-    }
-
-    const nextHotkeys = currentHotkeys.filter((_, hotkeyIndex) => hotkeyIndex !== index);
-    if (target === 'pushToTalkHotkey') {
-      setPushToTalkHotkey(nextHotkeys);
-    } else {
-      setToggleHotkey(nextHotkeys);
-    }
-    setHotkeyMessage('Removed shortcut.');
-  };
-
-  const handleReset = async () => {
-    if (captureTarget) {
-      await window.api.resumeHotkey();
-      setCaptureTarget(null);
-    }
-    setPushToTalkHotkey([DEFAULT_PUSH_TO_TALK_HOTKEY]);
-    setToggleHotkey([DEFAULT_TOGGLE_HOTKEY]);
-    setHotkeyMessage(`Reset to default.`);
-  };
-
+  // Cancel any in-flight hotkey capture if we leave the shortcut step.
   useEffect(() => {
-    if (step !== 2) {
-      if (captureTarget) {
-        window.api.resumeHotkey();
-        setCaptureTarget(null);
-      }
+    if (stepId !== 'shortcut' && captureTarget) {
+      window.api.resumeHotkey();
+      setCaptureTarget(null);
     }
-  }, [step, captureTarget]);
+  }, [stepId, captureTarget]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -239,232 +143,499 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
         return;
       }
 
-      if (modifiers.length === 0) {
-        setHotkeyMessage('Please include at least one modifier key (Ctrl, Shift, Alt, Meta).');
-        return;
-      }
+      if (modifiers.length === 0) return;
 
       const mainKey = key.length === 1 ? key.toUpperCase() : key;
       const normalizedKey = normalizeHotkeyAccelerator(mainKey, '');
       const newHotkey = [...modifiers, normalizedKey].join(' + ');
 
-      const currentHotkeys = captureTarget.field === 'pushToTalkHotkey' ? pushToTalkHotkey : toggleHotkey;
-      const updatedHotkeys = [...currentHotkeys];
-      updatedHotkeys[captureTarget.index] = newHotkey;
+      const currentHotkeys =
+        captureTarget.field === 'pushToTalkHotkey' ? pushToTalkHotkey : toggleHotkey;
+      const updated = [...currentHotkeys];
+      updated[captureTarget.index] = newHotkey;
 
       if (captureTarget.field === 'pushToTalkHotkey') {
-        setPushToTalkHotkey(updatedHotkeys);
+        setPushToTalkHotkey(updated);
       } else {
-        setToggleHotkey(updatedHotkeys);
+        setToggleHotkey(updated);
       }
 
       window.api.resumeHotkey();
       setCaptureTarget(null);
-      setHotkeyMessage('Hotkey saved.');
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [captureTarget, pushToTalkHotkey, toggleHotkey]);
 
+  const pttLabel = formatHotkeyLabel(pushToTalkHotkey[0] ?? DEFAULT_PUSH_TO_TALK_HOTKEY);
+
   return (
     <motion.div
+      className="echo-onboarding"
       initial={{ opacity: 0 }}
-      animate={{ opacity: isClosing ? 0 : 1 }}
-      transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-[rgba(6,11,21,0.72)]"
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
     >
-      <motion.div
-        initial={MODAL_PANEL_INITIAL}
-        animate={isClosing ? MODAL_PANEL_EXIT : MODAL_PANEL_OPEN}
-        transition={isClosing ? MODAL_CLOSE_TRANSITION : MODAL_OPEN_TRANSITION}
-        onAnimationComplete={() => {
-          if (!isClosing) return;
-          onComplete({
-            onboardingComplete: true,
-            microphoneId: selectedMic,
-            microphoneLabel: selectedMicLabel,
-            pushToTalkHotkey,
-            toggleHotkey,
-          });
-        }}
-        className="theme-card relative flex w-full max-w-[460px] flex-col overflow-hidden rounded-[28px] shadow-2xl"
-      >
-        {/* Progress bar */}
-        <div className="h-1 bg-[color:var(--border-soft)]">
-          <motion.div
-            className="h-full bg-[color:var(--accent)]"
-            initial={{ width: '0%' }}
-            animate={{ width: `${((step + 1) / STEPS.length) * 100}%` }}
-            transition={panelTransition}
-          />
+      {/* Top bar — wordmark + progress dots + skip */}
+      <div className="echo-onb-top">
+        <div className="echo-wordmark" style={{ padding: 0, fontSize: 18 }}>
+          <span className="dot" aria-hidden="true" />
+          Echo
         </div>
+        <div className="echo-onb-progress">
+          {STEPS.map((_, i) => (
+            <div
+              key={i}
+              className={`step ${i < stepIndex ? 'done' : i === stepIndex ? 'active' : ''}`}
+            />
+          ))}
+        </div>
+        <button
+          type="button"
+          className="echo-btn echo-btn-ghost"
+          onClick={() => onComplete({ onboardingComplete: true })}
+        >
+          Skip setup
+        </button>
+      </div>
 
-        <div className="p-8">
-          {/* Step indicator */}
-          <div className="mb-6 flex items-center gap-2">
-            {STEPS.map((s, i) => (
-              <div
-                key={s.id}
-                className={`h-1.5 rounded-full transition-all duration-300 ${
-                  i <= step ? 'w-6 bg-[color:var(--accent)]' : 'w-1.5 bg-[color:var(--border-soft)]'
-                }`}
-              />
-            ))}
-            <span className="ml-auto text-[12px] font-medium text-[color:var(--text-faint)]">
-              {step + 1} / {STEPS.length}
-            </span>
-          </div>
-
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={current.id}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={fadeTransition}
-            >
-              <h2 className="text-[24px] font-bold tracking-tight text-[color:var(--text-primary)]">
-                {current.title}
-              </h2>
-              <p className="mt-2 text-[14px] leading-relaxed text-[color:var(--text-secondary)]">
-                {current.description}
-              </p>
-
-              {/* Step content */}
-              {current.id === 'welcome' && (
-                <div className="mt-8 flex items-center gap-4">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[color:var(--accent-surface)]">
-                    <Mic size={28} className="text-[color:var(--accent)]" />
-                  </div>
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[color:var(--accent-surface)]">
-                    <Keyboard size={28} className="text-[color:var(--accent)]" />
-                  </div>
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[color:var(--accent-surface)]">
-                    <Sparkles size={28} className="text-[color:var(--accent)]" />
+      {/* Body */}
+      <div className="echo-onb-body">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={stepId}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={fadeTransition}
+            className="echo-onb-card"
+          >
+            {stepId === 'welcome' && (
+              <>
+                <div className="echo-mic-illustration">
+                  <div className="ring" />
+                  <div className="ring r2" />
+                  <div className="ring r3" />
+                  <div className="echo-mic-orb-lg">
+                    <Mic size={36} />
                   </div>
                 </div>
-              )}
-
-              {current.id === 'microphone' && (
-                <div className="mt-6 max-h-[200px] space-y-2 overflow-y-auto">
+                <div className="echo-h-section" style={{ marginBottom: 16 }}>
+                  Welcome to Echo
+                </div>
+                <h1 className="echo-h-display">Talk. We'll handle the typing.</h1>
+                <p className="echo-lede">
+                  Echo lives in the background. Press a key, speak, release — your
+                  words appear wherever your cursor is. Email, code, docs, chats.
+                  Anywhere.
+                </p>
+                <div style={{ marginTop: 8 }}>
                   <button
                     type="button"
-                    onClick={() => handleMicSelect('', 'Default microphone')}
-                    className={`flex w-full items-center gap-3 rounded-md border px-4 py-3 text-left transition-all ${
-                      selectedMic === ''
-                        ? 'border-[color:var(--border-strong)] bg-[color:var(--accent-surface)]'
-                        : 'border-[color:var(--border-soft)] bg-[color:var(--surface-1)] hover:bg-[color:var(--surface-2)]'
-                    }`}
+                    className="echo-btn echo-btn-primary"
+                    style={{ padding: '12px 22px', fontSize: 14 }}
+                    onClick={goNext}
                   >
-                    <Mic size={16} className={selectedMic === '' ? 'text-[color:var(--accent)]' : 'text-[color:var(--text-faint)]'} />
-                    <span className={`flex-1 text-[13px] font-medium ${selectedMic === '' ? 'text-[color:var(--text-primary)]' : 'text-[color:var(--text-secondary)]'}`}>
-                      Default microphone
-                    </span>
-                    {selectedMic === '' && <Check size={16} className="text-[color:var(--accent)]" />}
+                    Let's set you up <ArrowRight size={14} />
                   </button>
-                  {devices.map((d) => (
+                </div>
+                <div style={{ marginTop: 24, fontSize: 12.5, color: 'var(--ink-muted)' }}>
+                  Takes about 90 seconds.
+                </div>
+              </>
+            )}
+
+            {stepId === 'shortcut' && (
+              <div style={{ maxWidth: 600, width: '100%' }}>
+                <div className="echo-h-section" style={{ marginBottom: 16, textAlign: 'center' }}>
+                  Step 1 of 3 · Choose your shortcut
+                </div>
+                <h1 className="echo-h-display" style={{ textAlign: 'center' }}>
+                  Pick a key to hold while you speak.
+                </h1>
+                <p
+                  className="echo-lede"
+                  style={{ textAlign: 'center', maxWidth: 540, margin: '14px auto 0' }}
+                >
+                  Press and hold to start, release to transcribe. We've found{' '}
+                  <kbd className="echo-kbd echo-kbd-lg">Right Ctrl</kbd> works for most
+                  people — but choose what feels natural.
+                </p>
+
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, 1fr)',
+                    gap: 10,
+                    marginTop: 22,
+                    width: '100%',
+                  }}
+                >
+                  <ShortcutOption
+                    label="Push to talk"
+                    description="Hold to dictate, release to stop."
+                    hotkey={pushToTalkHotkey[0] ?? DEFAULT_PUSH_TO_TALK_HOTKEY}
+                    capturing={captureTarget?.field === 'pushToTalkHotkey'}
+                    onCapture={() => handleCapture('pushToTalkHotkey', 0)}
+                  />
+                  <ShortcutOption
+                    label="Toggle dictation"
+                    description="Press once to start, again to stop."
+                    hotkey={toggleHotkey[0] ?? DEFAULT_TOGGLE_HOTKEY}
+                    capturing={captureTarget?.field === 'toggleHotkey'}
+                    onCapture={() => handleCapture('toggleHotkey', 0)}
+                  />
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 14,
+                    fontSize: 12.5,
+                    color: 'var(--ink-muted)',
+                    textAlign: 'center',
+                  }}
+                >
+                  You can change either of these any time in Settings.
+                </div>
+              </div>
+            )}
+
+            {stepId === 'microphone' && (
+              <div style={{ maxWidth: 540, width: '100%' }}>
+                <div className="echo-h-section" style={{ marginBottom: 16, textAlign: 'center' }}>
+                  Step 2 of 3 · Choose your microphone
+                </div>
+                <h1 className="echo-h-display" style={{ textAlign: 'center' }}>
+                  Which mic should Echo listen on?
+                </h1>
+                <p
+                  className="echo-lede"
+                  style={{ textAlign: 'center', margin: '14px auto 0', maxWidth: 460 }}
+                >
+                  Pick the microphone you want to use for dictation. You can change
+                  this in Settings later.
+                </p>
+
+                <div
+                  style={{
+                    marginTop: 22,
+                    maxHeight: 240,
+                    overflowY: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}
+                >
+                  <MicOption
+                    label="Default microphone"
+                    active={selectedMic === ''}
+                    onSelect={() => {
+                      setSelectedMic('');
+                      setSelectedMicLabel('Default microphone');
+                    }}
+                  />
+                  {devices.map((device) => (
+                    <MicOption
+                      key={device.deviceId}
+                      label={device.label || 'Unknown microphone'}
+                      active={selectedMic === device.deviceId}
+                      onSelect={() => {
+                        setSelectedMic(device.deviceId);
+                        setSelectedMicLabel(device.label || 'Unknown microphone');
+                      }}
+                    />
+                  ))}
+                </div>
+
+                <div
+                  onClick={() => {
+                    if (recordingPulse) return;
+                    setRecordingPulse(true);
+                    window.setTimeout(() => {
+                      setRecordingPulse(false);
+                      setTested(true);
+                    }, 1500);
+                  }}
+                  style={{
+                    margin: '22px auto 0',
+                    width: 120,
+                    height: 120,
+                    borderRadius: '50%',
+                    background: recordingPulse
+                      ? 'radial-gradient(circle at 30% 25%, #E4886A, #C96442 65%)'
+                      : 'var(--card-raw)',
+                    border: recordingPulse ? 'none' : '1px dashed var(--line-strong)',
+                    color: recordingPulse ? 'var(--ivory)' : 'var(--ink-soft)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    boxShadow: recordingPulse
+                      ? '0 16px 40px -8px rgba(201,100,66,0.55)'
+                      : 'none',
+                    transition: 'all 200ms ease',
+                  }}
+                  role="button"
+                  aria-label="Tap to test microphone"
+                >
+                  <Mic size={32} />
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 10,
+                    fontSize: 13,
+                    color: tested ? 'var(--moss)' : 'var(--ink-muted)',
+                    textAlign: 'center',
+                    height: 20,
+                  }}
+                >
+                  {recordingPulse
+                    ? 'Listening…'
+                    : tested
+                      ? '✓ Sounds great. Mic calibrated.'
+                      : 'Tap the mic to test'}
+                </div>
+              </div>
+            )}
+
+            {stepId === 'tone' && (
+              <div style={{ maxWidth: 760, width: '100%' }}>
+                <div className="echo-h-section" style={{ marginBottom: 16, textAlign: 'center' }}>
+                  Step 3 of 3 · Pick a tone
+                </div>
+                <h1 className="echo-h-display" style={{ textAlign: 'center' }}>
+                  How should it sound when you talk?
+                </h1>
+                <p
+                  className="echo-lede"
+                  style={{ textAlign: 'center', margin: '14px auto 22px', maxWidth: 540 }}
+                >
+                  Echo polishes your raw speech into clean writing. You can change
+                  this later — or let it match the app you're in.
+                </p>
+
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, 1fr)',
+                    gap: 12,
+                    width: '100%',
+                  }}
+                >
+                  {[
+                    { id: 'formal', name: 'Formal', sub: 'Polished' },
+                    { id: 'casual', name: 'Casual', sub: 'Balanced' },
+                    { id: 'very_casual', name: 'Very casual', sub: 'Lowercase' },
+                  ].map((t) => (
                     <button
+                      key={t.id}
                       type="button"
-                      key={d.deviceId}
-                      onClick={() => handleMicSelect(d.deviceId, d.label || 'Unknown device')}
-                      className={`flex w-full items-center gap-3 rounded-md border px-4 py-3 text-left transition-all ${
-                        selectedMic === d.deviceId
-                          ? 'border-[color:var(--border-strong)] bg-[color:var(--accent-surface)]'
-                          : 'border-[color:var(--border-soft)] bg-[color:var(--surface-1)] hover:bg-[color:var(--surface-2)]'
-                      }`}
+                      className="echo-tone-card"
+                      style={{ textAlign: 'left', cursor: 'pointer', font: 'inherit' }}
                     >
-                      <Mic size={16} className={selectedMic === d.deviceId ? 'text-[color:var(--accent)]' : 'text-[color:var(--text-faint)]'} />
-                      <span className={`flex-1 truncate text-[13px] font-medium ${selectedMic === d.deviceId ? 'text-[color:var(--text-primary)]' : 'text-[color:var(--text-secondary)]'}`}>
-                        {d.label || 'Unknown device'}
-                      </span>
-                      {selectedMic === d.deviceId && <Check size={16} className="text-[color:var(--accent)]" />}
+                      <div className="radio" aria-hidden="true" />
+                      <div className="name">{t.name}</div>
+                      <div className="sub" style={{ marginBottom: 0 }}>{t.sub}</div>
                     </button>
                   ))}
                 </div>
-              )}
 
-              {current.id === 'hotkey' && (
-                <div className="mt-6 space-y-4">
-                  <ShortcutCard
-                    title="Push to talk"
-                    description="Hold to dictate, then release to stop."
-                    target="pushToTalkHotkey"
-                    hotkeys={pushToTalkHotkey}
-                    captureTarget={captureTarget}
-                    message={hotkeyMessage}
-                    onCapture={handleCapture}
-                    onRemove={handleRemove}
-                  />
-
-                  <ShortcutCard
-                    title="Toggle dictation"
-                    description="Press once to start dictation and again to stop."
-                    target="toggleHotkey"
-                    hotkeys={toggleHotkey}
-                    captureTarget={captureTarget}
-                    message={hotkeyMessage}
-                    onCapture={handleCapture}
-                    onRemove={handleRemove}
-                  />
-
-                  <div className="mt-4 text-center">
-                    <button
-                      type="button"
-                      onClick={handleReset}
-                      className="theme-button-secondary px-4 text-[13px]"
-                    >
-                      Reset to default
-                    </button>
-                  </div>
+                <div
+                  style={{
+                    marginTop: 14,
+                    fontSize: 12.5,
+                    color: 'var(--ink-muted)',
+                    textAlign: 'center',
+                  }}
+                >
+                  Six tones to choose from later, including <em>Coding</em> and{' '}
+                  <em>Excited</em>.
                 </div>
-              )}
-
-              {current.id === 'ready' && (
-                <div className="mt-6 flex items-center gap-3 rounded-xl border border-[color:var(--border-strong)] bg-[color:var(--accent-surface)] p-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[color:var(--accent)] text-[color:var(--accent-text)]">
-                    <Check size={20} />
-                  </div>
-                  <div>
-                    <div className="text-[13px] font-semibold text-[color:var(--text-primary)]">Setup complete</div>
-                    <div className="text-[12px] text-[color:var(--text-muted)]">You can change these settings anytime.</div>
-                  </div>
-                </div>
-              )}
-            </motion.div>
-          </AnimatePresence>
-
-          {/* Actions */}
-          <div className="mt-8 flex items-center justify-between">
-            {step > 0 ? (
-              <button
-                type="button"
-                onClick={() => {
-                  if (captureTarget) {
-                    window.api.resumeHotkey();
-                  }
-                  setCaptureTarget(null);
-                  setStep(step - 1);
-                }}
-                className="theme-button-secondary px-5 text-[13px] font-medium"
-              >
-                Back
-              </button>
-            ) : (
-              <div />
+              </div>
             )}
-            <button
-              type="button"
-              onClick={handleNext}
-              disabled={isClosing}
-              className="theme-button-primary flex items-center gap-2 px-6 text-[13px] font-semibold"
-            >
-              {isLast ? 'Get started' : 'Continue'}
-              {!isLast && <ChevronRight size={16} />}
-            </button>
-          </div>
+
+            {stepId === 'ready' && (
+              <>
+                <div
+                  style={{
+                    width: 84,
+                    height: 84,
+                    borderRadius: '50%',
+                    background: 'var(--accent-tint)',
+                    color: 'var(--clay)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: 28,
+                  }}
+                >
+                  <Check size={36} />
+                </div>
+                <div className="echo-h-section" style={{ marginBottom: 16 }}>
+                  You're all set
+                </div>
+                <h1 className="echo-h-display" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
+                  Try it now — hold{' '}
+                  <HotkeyTokens label={pttLabel} />
+                </h1>
+                <p className="echo-lede">
+                  Echo will sit quietly in the background. Open any app, place your
+                  cursor, and press to speak. Welcome aboard.
+                </p>
+                <button
+                  type="button"
+                  className="echo-btn echo-btn-primary"
+                  style={{ padding: '12px 24px', fontSize: 14, marginTop: 8 }}
+                  onClick={goNext}
+                >
+                  Open Echo <ArrowRight size={14} />
+                </button>
+              </>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+
+      {/* Bottom bar — Back / counter / Continue */}
+      <div className="echo-onb-bot">
+        <button
+          type="button"
+          className="echo-btn echo-btn-ghost"
+          onClick={goPrev}
+          disabled={stepIndex === 0}
+          style={{ opacity: stepIndex === 0 ? 0.3 : 1 }}
+        >
+          <ArrowLeft size={14} /> Back
+        </button>
+        <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>
+          {stepIndex + 1} / {STEPS.length}
         </div>
-      </motion.div>
+        {!isLast ? (
+          <button
+            type="button"
+            className="echo-btn echo-btn-dark"
+            onClick={goNext}
+            style={{ padding: '10px 18px' }}
+          >
+            Continue <ArrowRight size={14} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="echo-btn echo-btn-dark"
+            onClick={goNext}
+            style={{ padding: '10px 18px' }}
+          >
+            Get started <ArrowRight size={14} />
+          </button>
+        )}
+      </div>
     </motion.div>
+  );
+}
+
+function ShortcutOption({
+  label,
+  description,
+  hotkey,
+  capturing,
+  onCapture,
+}: {
+  label: string;
+  description: string;
+  hotkey: string;
+  capturing: boolean;
+  onCapture: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onCapture}
+      className="echo-card"
+      style={{
+        padding: '16px 18px',
+        textAlign: 'left',
+        cursor: 'pointer',
+        font: 'inherit',
+        background: capturing ? 'var(--accent-tint)' : 'var(--card-raw)',
+        borderColor: capturing ? 'var(--clay)' : 'var(--line-soft)',
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>{label}</div>
+      <div style={{ marginTop: 4, fontSize: 12, color: 'var(--ink-muted)' }}>
+        {description}
+      </div>
+      <div
+        style={{
+          marginTop: 12,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+        }}
+      >
+        <HotkeyTokens
+          label={capturing ? 'Press keys…' : formatHotkeyLabel(hotkey)}
+          subdued={capturing}
+        />
+        <Pencil
+          size={13}
+          style={{ color: capturing ? 'var(--clay)' : 'var(--ink-faint)' }}
+        />
+      </div>
+    </button>
+  );
+}
+
+function MicOption({
+  label,
+  active,
+  onSelect,
+}: {
+  label: string;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '12px 14px',
+        borderRadius: 10,
+        border: '1px solid',
+        borderColor: active ? 'var(--clay)' : 'var(--line-soft)',
+        background: active ? 'var(--accent-tint)' : 'var(--card-raw)',
+        cursor: 'pointer',
+        font: 'inherit',
+        textAlign: 'left',
+      }}
+    >
+      <Mic
+        size={16}
+        style={{ color: active ? 'var(--clay)' : 'var(--ink-faint)' }}
+      />
+      <span
+        style={{
+          flex: 1,
+          fontSize: 13.5,
+          fontWeight: 500,
+          color: active ? 'var(--ink)' : 'var(--ink-2)',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        {label}
+      </span>
+      {active ? <Check size={16} style={{ color: 'var(--clay)' }} /> : null}
+    </button>
   );
 }
