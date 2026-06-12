@@ -23,6 +23,7 @@ import { toast as toastDispatch, type ToastType } from './components/toast/useTo
 import { AppState, AppTab, SpeechMetrics, Settings as SettingsType } from '../shared/types';
 import { MIC_TEST_ACTIVE_EVENT } from './lib/micTest';
 import { enumerateAudioInputDevices } from './lib/audioDevices';
+import { PcmRecorder } from './lib/pcmRecorder';
 import DashboardView from './components/Dashboard';
 import Onboarding from './components/Onboarding';
 import MotionWarmup from './components/MotionWarmup';
@@ -400,6 +401,7 @@ export default function App() {
   const appStateRef = useRef<AppState>('idle');
   const settingsRef = useRef<SettingsType | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const pcmRecorderRef = useRef<PcmRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const streamDeviceIdRef = useRef('');
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -569,6 +571,13 @@ export default function App() {
       clearRecorderStopTimeout();
       resetAudioLevelVisualization();
 
+      if (pcmRecorderRef.current?.isRecording) {
+        // Worklet capture is synchronous — drop the audio immediately;
+        // no deferred onstop will fire, so clear the discard flag too.
+        pcmRecorderRef.current.discard();
+        discardPendingRecordingRef.current = false;
+      }
+
       if (recorderRef.current && recorderRef.current.state === 'recording') {
         try {
           recorderRef.current.requestData();
@@ -585,6 +594,9 @@ export default function App() {
     };
 
     const teardownAudioGraph = async () => {
+      pcmRecorderRef.current?.dispose();
+      pcmRecorderRef.current = null;
+
       try {
         sourceNodeRef.current?.disconnect();
       } catch { }
@@ -639,6 +651,14 @@ export default function App() {
         audioContextRef.current = audioContext;
         sourceNodeRef.current = source;
         analyserRef.current = analyser;
+
+        try {
+          pcmRecorderRef.current = await PcmRecorder.attach(audioContext, source);
+        } catch (error) {
+          // Worklet unavailable — onStart falls back to MediaRecorder.
+          console.warn('PCM worklet attach failed; using MediaRecorder fallback:', error);
+          pcmRecorderRef.current = null;
+        }
       }
 
       if (audioContextRef.current.state === 'suspended') {
@@ -722,6 +742,22 @@ export default function App() {
     };
     const handleActivityForIdleTimer = () => scheduleIdleTeardown();
 
+    // Shared between onStart (where the level loop fills them) and onStop
+    // (where the worklet branch finalizes the averages). MediaRecorder's
+    // deferred onstop reads them through the same closure.
+    let speechMetrics: SpeechMetrics = {
+      frameCount: 0,
+      speechFrames: 0,
+      longestSpeechRunFrames: 0,
+      peakBand: 0,
+      averageBand: 0,
+      peakRms: 0,
+      averageRms: 0,
+    };
+    let totalBand = 0;
+    let totalRms = 0;
+    let currentSpeechRunFrames = 0;
+
     const onStart = async () => {
       if (appStateRef.current === 'recording') return;
       handleActivityForIdleTimer();
@@ -765,17 +801,12 @@ export default function App() {
 
         const analyser = analyserRef.current!;
         recordingStartRef.current = Date.now();
-        const stream = streamRef.current!;
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : 'audio/webm';
-        const recorder = new MediaRecorder(stream, { mimeType });
-        const chunks: BlobPart[] = [];
         discardPendingRecordingRef.current = false;
+        const pcmRecorder = pcmRecorderRef.current;
 
         const freqData = new Uint8Array(analyser.frequencyBinCount);
         const timeData = new Uint8Array(analyser.fftSize);
-        const speechMetrics: SpeechMetrics = {
+        speechMetrics = {
           frameCount: 0,
           speechFrames: 0,
           longestSpeechRunFrames: 0,
@@ -784,9 +815,9 @@ export default function App() {
           peakRms: 0,
           averageRms: 0,
         };
-        let totalBand = 0;
-        let totalRms = 0;
-        let currentSpeechRunFrames = 0;
+        totalBand = 0;
+        totalRms = 0;
+        currentSpeechRunFrames = 0;
 
         levelIntervalRef.current = window.setInterval(() => {
           if (audioContextRef.current?.state === 'suspended') {
@@ -860,6 +891,19 @@ export default function App() {
           }
         }, 33);
 
+        if (pcmRecorder) {
+          // Worklet path: PCM is already flowing; start() snapshots the
+          // pre-roll so hotkey-handling latency never clips the first word.
+          pcmRecorder.start();
+        } else {
+        // MediaRecorder fallback (worklet attach failed).
+        const stream = streamRef.current!;
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm';
+        const recorder = new MediaRecorder(stream, { mimeType });
+        const chunks: BlobPart[] = [];
+
         recorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
             chunks.push(event.data);
@@ -910,14 +954,20 @@ export default function App() {
         // with quick delivery of the first chunk on hotkey release.
         recorder.start(250);
         recorderRef.current = recorder;
+        }
 
         if (!recordingIntentRef.current || startAttempt !== startAttemptRef.current) {
-          recorder.onstop = null;
-          try {
-            recorder.requestData();
-          } catch { }
-          recorder.stop();
-          recorderRef.current = null;
+          if (pcmRecorder) {
+            pcmRecorder.discard();
+          } else if (recorderRef.current) {
+            const recorder = recorderRef.current;
+            recorder.onstop = null;
+            try {
+              recorder.requestData();
+            } catch { }
+            recorder.stop();
+            recorderRef.current = null;
+          }
           updateAppState('idle');
         }
       } catch (err) {
@@ -936,6 +986,51 @@ export default function App() {
       startAttemptRef.current += 1;
 
       resetAudioLevelVisualization();
+
+      const pcmRecorder = pcmRecorderRef.current;
+      if (pcmRecorder?.isRecording) {
+        // Worklet path: the PCM is already in memory — no async stop
+        // dance, no container decode, no stop watchdog needed.
+        clearRecorderStopTimeout();
+
+        if (discardPendingRecordingRef.current) {
+          discardPendingRecordingRef.current = false;
+          pcmRecorder.discard();
+          clearProcessingTimeout();
+          void window.api.cancelRecordingStart?.();
+          updateAppState('idle');
+          return;
+        }
+
+        beginProcessingTimeout();
+        updateAppState('processing');
+        // Finalize the metric averages exactly as MediaRecorder's onstop does.
+        speechMetrics.averageBand = speechMetrics.frameCount > 0 ? totalBand / speechMetrics.frameCount : 0;
+        speechMetrics.averageRms = speechMetrics.frameCount > 0 ? totalRms / speechMetrics.frameCount : 0;
+
+        try {
+          const { samples, sampleRate } = pcmRecorder.stop();
+          const downsampled = downsampleFloat32Buffer(samples, sampleRate, OFFLINE_SAMPLE_RATE);
+          normalizeAudioForTranscription(downsampled);
+          const audioBytes = new Uint8Array(downsampled.buffer, downsampled.byteOffset, downsampled.byteLength);
+          const audioBuffer = new ArrayBuffer(audioBytes.byteLength);
+          new Uint8Array(audioBuffer).set(audioBytes);
+          const durationMs = Math.max(0, Date.now() - recordingStartRef.current);
+
+          void window.api.transcribeAudio(audioBuffer, durationMs, speechMetrics).catch((error: unknown) => {
+            console.error('Transcription IPC error:', error);
+            clearProcessingTimeout();
+            void window.api.cancelRecordingStart?.();
+            enterTransientErrorState('Transcription failed. Please try again.');
+          });
+        } catch (error) {
+          console.error('PCM capture error:', error);
+          clearProcessingTimeout();
+          void window.api.cancelRecordingStart?.();
+          enterTransientErrorState('Failed to process recorded audio.', 3000);
+        }
+        return;
+      }
 
       if (recorderRef.current && recorderRef.current.state === 'recording') {
         try {
