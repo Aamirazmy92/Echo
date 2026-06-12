@@ -365,7 +365,7 @@ export default function Dashboard({ settings: parentSettings }: DashboardProps) 
     // and an inner scroller that owns the history list. The greeting layer
     // mirrors the Echo redesign — serif headline, hotkey-in-lede, corner stat
     // chip, and a soft CTA-press card with the clay mic orb.
-    <div className="relative flex h-full flex-col px-10 pt-6">
+    <div className="relative flex h-full flex-col px-12 pt-9">
       <div className="echo-greeting-block shrink-0">
         <div className="min-w-0">
           <div className="echo-h-section" style={{ marginBottom: 10 }}>{todayKicker}</div>
@@ -389,8 +389,8 @@ export default function Dashboard({ settings: parentSettings }: DashboardProps) 
       </div>
 
       {/* History Toolbar */}
-      <div className="shrink-0 mb-4 flex max-w-[920px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" style={{ marginTop: 14 }}>
-        <h2 className="echo-h-title" style={{ fontSize: 22 }}>History</h2>
+      <div className="shrink-0 mb-4 flex max-w-[920px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" style={{ marginTop: 28 }}>
+        <h2 className="echo-h-title">History</h2>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           <div className="echo-search" style={{ width: 280, minWidth: 0 }}>
             <Search size={14} className="shrink-0" style={{ color: 'var(--ink-muted)' }} />
