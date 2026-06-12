@@ -332,18 +332,11 @@ type BasicUsageLimitPayload = BasicUsageSnapshot & {
   message: string;
 };
 
-function countWordsThisWeek(entries: Array<{ wordCount: number; createdAt: string }>): number {
-  const weekStart = new Date(getWeekStartIso());
-  return entries.reduce((total, entry) => {
-    const createdAt = new Date(entry.createdAt);
-    if (Number.isNaN(createdAt.getTime()) || createdAt < weekStart) return total;
-    return total + entry.wordCount;
-  }, 0);
-}
+type HistoryModule = Awaited<ReturnType<typeof ensureHistoryModule>>;
 
-function getBasicUsageSnapshot(entries: Array<{ wordCount: number; createdAt: string }>): BasicUsageSnapshot {
+function getBasicUsageSnapshot(history: HistoryModule): BasicUsageSnapshot {
   const tier = getEntitlementsSnapshot().tier;
-  const used = countWordsThisWeek(entries);
+  const used = history.getWeeklyWordCount(getWeekStartIso());
   const remaining = Math.max(0, BASIC_WEEKLY_WORD_CAP - used);
   return {
     tier,
@@ -368,19 +361,20 @@ function notifyBasicUsageLimitReached(snapshot: BasicUsageSnapshot): void {
   } satisfies BasicUsageLimitPayload);
 }
 
-async function getBasicUsageSnapshotForGate(
-  entries: Array<{ wordCount: number; createdAt: string }>
-): Promise<BasicUsageSnapshot> {
-  let snapshot = getBasicUsageSnapshot(entries);
+async function getBasicUsageSnapshotForGate(history: HistoryModule): Promise<BasicUsageSnapshot> {
+  let snapshot = getBasicUsageSnapshot(history);
   if (!snapshot.exhausted) return snapshot;
 
+  // Only the already-blocked path pays for a network refresh — the user
+  // cannot record anyway, so latency here is acceptable and it gives a
+  // just-upgraded Pro user an immediate unblock.
   try {
     await refreshEntitlements();
   } catch (err) {
     logWarn('usage-limit', 'Entitlements refresh failed before Basic usage gate', err);
   }
 
-  snapshot = getBasicUsageSnapshot(entries);
+  snapshot = getBasicUsageSnapshot(history);
   return snapshot;
 }
 
@@ -634,7 +628,7 @@ function registerAllIpcs() {
   });
   ipcMain.handle('basic-usage-get', async () => {
     const history = await ensureHistoryModule();
-    return getBasicUsageSnapshotForGate(history.getAllEntries());
+    return getBasicUsageSnapshotForGate(history);
   });
   ipcMain.handle('export-history', async (_, format: 'csv' | 'json') => {
     const history = await ensureHistoryModule();
@@ -877,7 +871,7 @@ function registerAllIpcs() {
       void prewarmInjectHelper().catch(() => { /* logged via waiter */ });
 
       const history = await historyModulePromise;
-      const currentBasicUsage = await getBasicUsageSnapshotForGate(history.getAllEntries());
+      const currentBasicUsage = await getBasicUsageSnapshotForGate(history);
       if (currentBasicUsage.exhausted) {
         updateTrayState('idle');
         updateOverlayState('error');
