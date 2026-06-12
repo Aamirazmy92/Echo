@@ -3,6 +3,8 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'child_proc
 import { updateOverlayState } from './overlay';
 import { updateTrayState } from './tray';
 import { prewarmInjectHelper } from './inject';
+import { refreshEntitlementsInBackground } from './entitlements';
+import { hasCloudSession, prewarmCloudConnection } from './cloud';
 import { type Settings } from '../shared/types';
 import {
   DEFAULT_CANCEL_HOTKEY,
@@ -474,6 +476,14 @@ function startRecording(mode: Exclude<ShortcutMode, 'idle'>) {
   void prewarmInjectHelper().catch((error) => {
     console.warn('[hotkey] inject helper prewarm failed:', error?.message ?? error);
   });
+
+  // While the user is speaking: make sure the entitlement snapshot the
+  // router will consult is fresh, and open the TLS connection the upload
+  // will ride on. Both are fire-and-forget — never awaited here.
+  refreshEntitlementsInBackground();
+  if (hasCloudSession()) {
+    prewarmCloudConnection();
+  }
 }
 
 function stopRecording(mode?: Exclude<ShortcutMode, 'idle'>) {

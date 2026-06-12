@@ -41,6 +41,18 @@ function functionsBaseUrl(): string {
   return SUPABASE_URL.replace(/\/+$/, '') + '/functions/v1';
 }
 
+/**
+ * Best-effort preflight so DNS + TLS to the functions host are already
+ * warm when the dictation upload starts on hotkey release. OPTIONS hits
+ * the edge CORS handler — no auth, no body, no side effects.
+ */
+export function prewarmCloudConnection(): void {
+  if (!isCloudConfigured()) return;
+  void fetch(`${functionsBaseUrl()}/transcribe`, { method: 'OPTIONS' }).catch(() => {
+    // Connection warming is opportunistic; errors are expected offline.
+  });
+}
+
 async function call<TResult>(
   path: string,
   init: { method?: 'POST' | 'GET'; body?: BodyInit | null; headers?: Record<string, string>; signal?: AbortSignal } = {},
