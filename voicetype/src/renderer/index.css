@@ -1829,7 +1829,7 @@ select {
   align-items: flex-end;
   justify-content: space-between;
   gap: 32px;
-  padding: 8px 0 28px;
+  padding: 4px 0 36px;
 }
 
 .echo-h-section {
@@ -1857,30 +1857,30 @@ select {
 }
 
 .echo-lede {
-  font-family: var(--font-display);
-  font-size: 17px;
-  line-height: 1.55;
-  color: var(--ink-2);
+  font-family: var(--font-body);
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
   font-weight: 400;
-  letter-spacing: -0.005em;
-  font-feature-settings: "kern" 1, "liga" 1, "dlig" 1;
-  font-optical-sizing: auto;
+  letter-spacing: -0.003em;
 }
 
 .echo-stat-chip {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 10px 16px;
-  background: var(--card-raw);
-  border: 1px solid var(--line-soft);
-  border-radius: 999px;
+  gap: 16px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
   white-space: nowrap;
   font-size: 13px;
   color: var(--ink-soft);
 }
 
 .echo-stat-chip .num {
+  font-family: var(--font-display);
+  font-size: 17px;
   font-weight: 500;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
@@ -1888,7 +1888,7 @@ select {
 
 .echo-stat-chip .div {
   width: 1px;
-  height: 16px;
+  height: 14px;
   background: var(--line);
 }
 
@@ -1900,9 +1900,9 @@ select {
 /* "Press to dictate" CTA card with mic orb */
 .echo-cta-press {
   margin-top: 18px;
-  background: linear-gradient(180deg, #FBF8F1 0%, #F4F0E4 100%);
-  border: 1px solid var(--line);
-  border-radius: 14px;
+  background: var(--card-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
   padding: 22px 28px;
   display: flex;
   align-items: center;
@@ -1919,9 +1919,7 @@ select {
   align-items: center;
   justify-content: center;
   color: var(--ivory);
-  box-shadow:
-    0 8px 24px -6px rgba(201, 100, 66, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  box-shadow: 0 6px 18px -8px rgba(201, 100, 66, 0.4);
   flex-shrink: 0;
 }
 
@@ -1989,7 +1987,7 @@ select {
 .echo-history-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
 }
 
 .echo-day-divider {
@@ -2018,17 +2016,16 @@ select {
   display: grid;
   grid-template-columns: 88px 1fr auto;
   gap: 18px;
-  padding: 14px 12px 14px 14px;
+  padding: 15px 12px;
   border-radius: 10px;
   /* Rows themselves aren't clickable — only the hover actions are, so no
      cursor: pointer here. */
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease;
   align-items: start;
-  border-left: 2px solid transparent;
 }
+.echo-history-item + .echo-history-item { border-top: 1px solid var(--line-soft); }
 .echo-history-item:hover {
-  background: var(--card-soft);
-  border-left-color: var(--accent-soft);
+  background: var(--hover-neutral);
 }
 
 .echo-history-item .time {
@@ -2388,15 +2385,13 @@ select {
 /* Title used in the upper section of bundled screens — paired with a
    short uppercase kicker and an optional serif lede underneath. */
 .echo-h-title {
-  font-family: var(--font-display);
-  font-size: 28px;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-  font-weight: 500;
+  font-family: var(--font-body);
+  font-size: 20px;
+  line-height: 1.2;
+  letter-spacing: -0.014em;
+  font-weight: 600;
   color: var(--ink);
   margin: 0;
-  font-feature-settings: "kern" 1, "liga" 1, "dlig" 1;
-  font-optical-sizing: auto;
 }
 
 /* Pill-style segmented tabs ("All · 6", "Personal · 3"). */
@@ -2406,7 +2401,7 @@ select {
   background: var(--card-soft);
   padding: 4px;
   border-radius: 9px;
-  border: 1px solid var(--line-soft);
+  border: none;
 }
 .echo-tabs button {
   padding: 6px 14px;
@@ -2435,13 +2430,14 @@ select {
   gap: 8px;
   background: var(--card-raw);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 7px 11px;
   min-width: 240px;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 .echo-search:focus-within {
-  border-color: var(--ink);
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 3px rgba(31, 27, 22, 0.04);
 }
 .echo-search input:focus,
 .echo-search input:focus-visible {
