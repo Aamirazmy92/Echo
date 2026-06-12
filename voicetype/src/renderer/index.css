@@ -80,23 +80,23 @@
        warm gold, blue, and sage). */
     /* Canvas + pane surfaces tuned to the Echo redesign — a warm
        Claude-clay cream shell with a slightly lighter writing pane. */
-    --background: 44 23% 96%;             /* #FAF9F5  pane / main writing surface */
+    --background: 40 43% 99%;             /* #FDFCFA  pane / main writing surface */
     --foreground: 30 13% 11%;             /* #1F1E1B  warm ink */
 
     --card: 0 0% 100%;                    /* #FFFFFF  cards on pane */
     --card-foreground: 30 13% 11%;
 
-    --popover: 44 23% 96%;                /* #FAF9F5  popover sheet matches pane */
+    --popover: 40 43% 99%;                /* #FDFCFA  main panel + popover sheet */
     --popover-foreground: 30 13% 11%;
 
     /* Claude clay accent — the redesign's signature warmth. */
     --primary: 14 53% 53%;                /* #C96442  Claude clay */
     --primary-foreground: 38 53% 96%;     /* #FBF6EE  warm ivory */
 
-    --secondary: 45 26% 92%;              /* #F2EFE4 */
+    --secondary: 45 24% 94%;              /* #F4F2EC */
     --secondary-foreground: 30 13% 11%;
 
-    --muted: 47 30% 95%;                  /* #F7F5EE  card-soft */
+    --muted: 45 24% 96%;                  /* #F8F7F3  card-soft */
     --muted-foreground: 30 9% 38%;        /* #6B6358 */
 
     --accent: 40 7% 92%;
@@ -116,33 +116,33 @@
     --warning: 35 51% 47%;                /* #B6843B  warm amber */
     --warning-soft: 35 51% 47% / 0.18;
 
-    --border: 42 26% 85%;                 /* #E2DDD0  hairline */
-    --border-strong: 44 19% 79%;          /* #D4CEBD */
-    --input: 42 26% 85%;
+    --border: 44 22% 90%;                 /* #EBE8E0  hairline, quieter */
+    --border-strong: 44 16% 84%;          /* #DEDAD0 */
+    --input: 44 22% 90%;
     --ring: 30 13% 11%;
     --focus-ring-width: 1px;
     --focus-ring-color: hsl(var(--foreground));
 
     /* Sidebar = the redesign's warm cream sidebar surface. */
-    --sidebar: 47 26% 88%;                /* #EAE6D9 */
+    --sidebar: 45 24% 93%;                /* #F2F0EA  sidebar merges into shell */
     --sidebar-foreground: 30 13% 11%;
 
-    --app-bg: 45 25% 91%;                 /* #EFECE3  outer canvas around the window */
+    --app-bg: 45 24% 93%;                 /* #F2F0EA  outer canvas around the window */
 
     /* Redesign-only tokens — usable as raw CSS variables in custom CSS. */
-    --canvas: #EFECE3;
-    --sidebar-bg: #EAE6D9;
-    --pane: #FAF9F5;
+    --canvas: #F2F0EA;
+    --sidebar-bg: #F2F0EA;
+    --pane: #FDFCFA;
     --card-raw: #FFFFFF;
-    --card-soft: #F7F5EE;
+    --card-soft: #F8F7F3;
     --ink: #1F1E1B;
     --ink-2: #3F3B33;
     --ink-soft: #6B6358;
     --ink-muted: #98907F;
     --ink-faint: #BAB2A0;
-    --line: #E2DDD0;
-    --line-soft: #ECE7DA;
-    --line-strong: #D4CEBD;
+    --line: #EBE8E0;
+    --line-soft: #EFECE4;
+    --line-strong: #DEDAD0;
     --clay: #C96442;
     --clay-hover: #B5563A;
     --accent-soft: #F2DDD0;
