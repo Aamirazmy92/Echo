@@ -9,11 +9,8 @@
 @import "@fontsource/source-serif-4/500.css";
 @import "@fontsource/source-serif-4/600.css";
 
-/* Geist Sans — body sans-serif, paired with Geist Mono for kbd chips. */
-@import "@fontsource/geist-sans/400.css";
-@import "@fontsource/geist-sans/500.css";
-@import "@fontsource/geist-sans/600.css";
-@import "@fontsource/geist-sans/700.css";
+/* Geist Mono — kbd chips & code. (Geist Sans was dropped: Figtree is the
+   body face, so the sans files never rendered and only added weight.) */
 @import "@fontsource/geist-mono/400.css";
 @import "@fontsource/geist-mono/500.css";
 @import "@fontsource/geist-mono/600.css";
@@ -164,11 +161,10 @@
     --sakura: 10 50% 75%;                 /* Claude Soft Terracotta */
     --clay-hsl: 15 65% 60%;               /* Claude Terracotta */
 
-    /* Typography stacks — Source Serif 4 for display, Geist for body,
-       Geist Mono for keys & code. Falls back to the prior Cormorant /
-       Figtree stacks if the webfonts haven't loaded. */
-    --font-display: 'Source Serif 4', 'Cormorant', 'Tiempos Text', 'Iowan Old Style', Georgia, serif;
-    --font-body: 'Figtree', 'Geist Sans', 'Söhne', 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
+    /* Typography stacks — Source Serif 4 for display, Figtree for body,
+       Geist Mono for keys & code. */
+    --font-display: 'Source Serif 4', 'Tiempos Text', 'Iowan Old Style', Georgia, serif;
+    --font-body: 'Figtree', ui-sans-serif, system-ui, sans-serif;
     --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
 
     --radius: 0.75rem;
@@ -189,6 +185,10 @@
     --toast-error-chip-fg: #A2492D;
     --toast-info-chip-bg: rgba(20, 20, 19, 0.06);
     --toast-info-chip-fg: #141413;
+    --toast-icon-success: #788C5D;       /* Claude moss */
+    --toast-icon-error: #D97757;         /* Claude terracotta */
+    --toast-icon-info: #6C6B65;          /* Claude slate ink */
+    --moss-ink: #4F6940;                 /* dark moss for text on moss-soft chips */
 
     --status-idle-text: rgba(20, 20, 19, 0.55);
     --status-idle-bg: rgba(20, 20, 19, 0.05);
@@ -241,17 +241,8 @@
     font-feature-settings: "kern" 1, "liga" 1, "dlig" 1;
   }
 
-  /* Tracked uppercase eyebrow labels ("THEME", "TYPOGRAPHY" in the ref). */
-  .eyebrow {
-    font-size: 10px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: hsl(var(--muted-foreground));
-    font-weight: 500;
-  }
-
-  /* Sticky-note window now shares the app's icy shell + lavender writing
-     surfaces, so the first paint matches the final React UI. */
+  /* Sticky-note window shares the app's warm cream shell, so the first
+     paint matches the final React UI. */
   html.is-sticky-note,
   html.is-sticky-note body,
   html.is-sticky-note #root {
@@ -304,41 +295,7 @@
 .titlebar { -webkit-app-region: drag; }
 .no-drag  { -webkit-app-region: no-drag; }
 
-/* ─── Legacy theme compat classes (used by components not yet migrated) ─── */
 @layer components {
-  .theme-app-shell   { @apply text-foreground; }
-  .theme-sidebar     { @apply bg-sidebar rounded-2xl; }
-  .theme-main-panel  { @apply bg-background rounded-2xl relative; }
-  .theme-main-panel::before, .theme-main-panel::after { display: none; }
-
-  .theme-page-container {
-    @apply mx-auto h-full max-w-5xl overflow-y-auto px-8 py-8 text-foreground;
-  }
-
-  .theme-page-title {
-    @apply text-2xl font-bold tracking-tight text-foreground;
-  }
-
-  .theme-section-title {
-    @apply text-sm font-semibold text-foreground;
-  }
-
-  .theme-card {
-    @apply bg-card rounded-xl;
-  }
-
-  .theme-card-soft {
-    @apply bg-muted rounded-xl;
-  }
-
-  .theme-stat-card {
-    @apply bg-muted rounded-xl;
-  }
-
-  .theme-stat-icon {
-    @apply bg-secondary text-foreground;
-  }
-
   /* ─── Sticky note window: Apple Notes / Bear-style ─── */
 
   .sticky-note-viewport {
@@ -1218,13 +1175,13 @@
     text-decoration-color: rgba(31, 27, 22, 0.35);
   }
   .sticky-editor-body ul[data-list="check"] > li[data-checked="true"]::before {
-    background-color: #7361e8;
-    border-color: #7361e8;
+    background-color: var(--clay);
+    border-color: var(--clay);
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10' fill='none'%3E%3Cpath d='M1 5.2 4.2 8.4 11 1.4' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: center;
     background-size: 0.62rem 0.52rem;
-    box-shadow: 0 1px 2px rgba(115, 97, 232, 0.28);
+    box-shadow: 0 1px 2px rgba(201, 100, 66, 0.28);
   }
 
   .sticky-editor-fallback {
@@ -1592,97 +1549,35 @@
   }
   .sticky-delete-cancel:hover { background: rgba(0, 0, 0, 0.04); }
   .sticky-delete-confirm {
-    background: #ef4444;
-    color: #ffffff;
+    background: hsl(var(--destructive));
+    color: hsl(var(--destructive-foreground));
     border: 0;
   }
-  .sticky-delete-confirm:hover { background: #dc2626; }
+  .sticky-delete-confirm:hover { background: hsl(7 53% 38%); }
 
-  .theme-list {
-    @apply overflow-hidden rounded-xl border border-border bg-muted;
+  /* ─── Page layout primitives ─── */
+  /* Hover-reveal scrollbar for the main scroll surfaces — the global
+     rules hide scrollbars everywhere, but long Dictionary/Shortcut/History
+     lists need a position affordance. Matches the sticky-note panes. */
+  .scroll-hover {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
   }
-
-  .theme-list-row {
-    @apply transition-colors duration-100;
+  .scroll-hover::-webkit-scrollbar {
+    display: block;
+    width: 8px;
   }
-  .theme-list-row:hover {
-    @apply bg-accent;
+  .scroll-hover::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 999px;
   }
-
-  .theme-toolbar-search {
-    @apply flex items-center gap-2 h-9 rounded-lg border border-border bg-background/60 px-3;
-  }
-
-  .theme-toolbar-input {
-    @apply w-full border-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground;
-  }
-
-  .theme-field {
-    @apply w-full h-10 rounded-lg border border-border bg-background/60 px-3 text-foreground text-sm transition-colors;
-    @apply placeholder:text-muted-foreground focus:border-foreground focus:outline-none;
+  .scroll-hover:hover::-webkit-scrollbar-thumb {
+    background: var(--line-strong);
   }
 
-  .theme-button-primary {
-    @apply inline-flex items-center justify-center h-9 rounded-md bg-primary text-primary-foreground px-4 text-sm font-medium;
-    @apply transition-[transform,opacity] duration-200 hover:bg-foreground disabled:opacity-40 disabled:cursor-not-allowed;
-    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  .theme-button-secondary {
-    @apply inline-flex items-center justify-center h-9 rounded-md bg-secondary text-secondary-foreground border border-border px-4 text-sm font-medium;
-    @apply transition-[transform,background-color,border-color,color] duration-200 hover:border-foreground/20 disabled:opacity-40 disabled:cursor-not-allowed;
-    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  .theme-icon-button {
-    @apply inline-flex items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground;
-  }
-
-  .theme-pill {
-    @apply inline-flex items-center justify-center rounded-lg border border-border bg-background/50 text-foreground;
-  }
-
-  .theme-kbd {
-    @apply inline-flex items-center justify-center rounded-md border border-border bg-muted text-foreground px-2 py-0.5 text-xs font-medium;
-  }
-
-  .theme-tab {
-    @apply relative pb-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground;
-  }
-  .theme-tab.is-active {
-    @apply text-foreground;
-  }
-  .theme-tab.is-active::after {
-    content: "";
-    @apply absolute left-0 right-0 bottom-0 h-0.5 rounded-full bg-foreground;
-  }
-
-  .theme-divider {
-    border-color: hsl(var(--border));
-  }
-
-  .theme-selected-surface {
-    @apply !border-foreground/20 !bg-foreground/5;
-  }
-
-  .theme-page-dashboard { background: transparent; }
-
-  /* ─── Unified page layout primitives ───
-     Every top-level tab (Dashboard, Dictionary, Snippets, Style) uses
-     these for a consistent rhythm: same page padding, same header style,
-     same subtitle treatment. Keeps the app visually cohesive. */
-  .page-shell {
-    @apply h-full overflow-y-auto px-7 pb-8 pt-6;
-    scrollbar-gutter: stable;
-  }
-
-  .page-header {
-    @apply mb-5 flex items-start justify-between gap-6;
-  }
-
-  /* Top of the typography ladder. Cormorant display face for the warm
-     Japandi headings; tracked tighter and at a lighter weight (400) to
-     read calm rather than editorial. */
+  /* Top of the typography ladder. Source Serif 4 display face; tracked
+     tighter and at a lighter weight (400) to read calm rather than
+     editorial. */
   .page-title {
     @apply text-[34px] font-normal leading-tight text-foreground;
     font-family: var(--font-display);
@@ -1690,38 +1585,12 @@
     letter-spacing: -0.01em;
   }
 
-  .theme-page-title {
-    @apply text-[30px] font-normal leading-tight tracking-tight text-foreground;
-    font-family: var(--font-display);
-    font-weight: 400;
-    letter-spacing: -0.01em;
-  }
-
-  .page-subtitle {
-    @apply mt-1.5 max-w-[60ch] text-sm leading-relaxed text-muted-foreground;
-  }
-
-  /* In-card / in-section heading. Sized to sit one tier below page-title
-     and one tier above body text. */
-  .card-title {
-    @apply text-base font-semibold leading-snug text-foreground;
-  }
-
   .section-title {
     @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground;
   }
 
-  /* Unified soft card surface — used for list groups, hero blocks, stat
-     cards. Keeps borders subtle and shadow minimal for a clean feel. */
-  .surface {
-    @apply rounded-2xl bg-card;
-  }
-  .surface-soft {
-    @apply rounded-2xl bg-muted/60;
-  }
-
-  /* Primary CTA — solid black pill, white label. Matches the Flow
-     "Continue" button: no border, no shadow, subtle hover. */
+  /* Primary CTA — solid clay pill, ivory label. No border, no shadow;
+     hover darkens to ink. */
   .btn-primary {
     @apply inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary px-6 text-sm font-medium text-primary-foreground;
     @apply transition-[transform,opacity,background-color] duration-200;
@@ -1741,13 +1610,6 @@
     transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .btn-ghost-icon {
-    @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground;
-    @apply transition-[transform,background-color,border-color,color,box-shadow] duration-200 hover:bg-accent hover:text-foreground disabled:opacity-40;
-    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-    transform: translateZ(0);
-  }
-
   /* Sidebar nav item — always full-contrast label colour so every item
      stays legible whether idle, hovered, or active. Only the surface
      treatment distinguishes the active item. */
@@ -1759,101 +1621,9 @@
     @apply bg-black/[0.05] text-foreground;
   }
 
-  .stat-num {
-    font-family: 'Playfair Display', 'Georgia', 'Times New Roman', serif;
-  }
-
-  /* Keyboard cap — frosted-ice variant. A pale icy gradient (almost
-     white at the top fading into soft sky-blue) with a glossy top
-     highlight makes the chip read as a piece of polished frost. The
-     label is a deep icy blue so it stays readable against the light
-     surface, and a thin cyan rim + faint outer glow give it the
-     "rimed with frost" feel. The pill runs a slow press-loop
-     animation so the user notices it as the key to hold down. */
-  .kbd-key {
-    @apply relative inline-flex min-w-[36px] items-center justify-center rounded-[6px] px-2 py-[3px] text-[12px] font-semibold;
-    font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 50%),
-      linear-gradient(180deg, #FAF9F6 0%, #EDEAE0 55%, #E1DDD0 100%);
-    color: #141413;
-    border: 1px solid rgba(176, 174, 165, 0.4);
-    border-top-color: rgba(255, 255, 255, 0.95);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.9),
-      inset 0 -1px 0 rgba(176, 174, 165, 0.2),
-      0 1px 2px rgba(20, 20, 19, 0.08),
-      0 4px 12px rgba(217, 119, 87, 0.12),
-      0 0 16px rgba(217, 119, 87, 0.18);
-    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.75);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    transform: translateZ(0);
-    animation: kbd-press 2.4s ease-in-out infinite;
-    will-change: transform, box-shadow;
-  }
-
-  /* Press loop. Most of the cycle the chip rests; for a brief window
-     it dips down with a softer shadow and a slightly dimmer face,
-     mimicking the tactile feel of a real keycap depressing. The
-     pause between presses (~1.6s of "rest") is deliberate so the
-     animation reads as a deliberate "press me" hint rather than a
-     nervous twitch. */
-  @keyframes kbd-press {
-    0%, 55%, 100% {
-      transform: translateY(0);
-      box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.9),
-        inset 0 -1px 0 rgba(176, 174, 165, 0.2),
-        0 1px 2px rgba(20, 20, 19, 0.08),
-        0 4px 12px rgba(217, 119, 87, 0.12),
-        0 0 16px rgba(217, 119, 87, 0.18);
-      filter: brightness(1);
-    }
-    65% {
-      transform: translateY(1.5px);
-      box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.6),
-        inset 0 -1px 0 rgba(176, 174, 165, 0.1),
-        0 0 0 rgba(20, 20, 19, 0),
-        0 1px 3px rgba(20, 20, 19, 0.10),
-        0 0 8px rgba(217, 119, 87, 0.10);
-      filter: brightness(0.96);
-    }
-    80% {
-      transform: translateY(0);
-      box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.9),
-        inset 0 -1px 0 rgba(176, 174, 165, 0.2),
-        0 1px 2px rgba(20, 20, 19, 0.08),
-        0 4px 12px rgba(217, 119, 87, 0.12),
-        0 0 16px rgba(217, 119, 87, 0.18);
-      filter: brightness(1);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .kbd-key {
-      animation: none;
-    }
-  }
 }
 
-/* ─── Brand gradient (subtle warm wash used on hero cards) ───
-   A tiny amount of color for the hero/empty-state banners so the app
-   doesn't feel flat. Kept extremely soft to stay on-theme. */
 @layer utilities {
-  .bg-hero-soft {
-    background:
-      radial-gradient(120% 120% at 100% 0%, hsla(244, 76%, 62%, 0.10) 0%, transparent 55%),
-      radial-gradient(120% 120% at 0% 100%, hsla(34, 90%, 60%, 0.09) 0%, transparent 50%),
-      linear-gradient(135deg, hsla(220, 14%, 98%, 1) 0%, hsla(220, 14%, 96%, 1) 100%);
-  }
-  .bg-hero-mono {
-    background:
-      radial-gradient(120% 120% at 100% 0%, hsla(222, 20%, 11%, 0.04) 0%, transparent 55%),
-      linear-gradient(135deg, hsla(220, 14%, 98%, 1) 0%, hsla(220, 14%, 95%, 1) 100%);
-  }
 }
 
 /* Legacy cool-palette override removed — the warm Echo cream palette
@@ -2250,7 +2020,8 @@ select {
   gap: 18px;
   padding: 14px 12px 14px 14px;
   border-radius: 10px;
-  cursor: pointer;
+  /* Rows themselves aren't clickable — only the hover actions are, so no
+     cursor: pointer here. */
   transition: background 120ms ease, border-color 120ms ease;
   align-items: start;
   border-left: 2px solid transparent;
@@ -3431,6 +3202,141 @@ button.echo-nav-item svg {
 }
 .echo-note-menu button.is-danger:hover {
   background: var(--hover-neutral);
+}
+
+.note-lock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(31, 27, 22, 0.22);
+  backdrop-filter: blur(2px);
+}
+
+.note-lock-modal {
+  width: min(340px, calc(100vw - 36px));
+  padding: 20px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--card-raw);
+  box-shadow: 0 24px 60px rgba(31, 27, 22, 0.18);
+}
+
+.note-lock-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  background: rgba(31, 27, 22, 0.06);
+  color: var(--ink);
+}
+
+.note-lock-modal h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.note-lock-note {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.note-lock-hint {
+  margin: 8px 0 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.note-lock-field {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.note-lock-field input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  letter-spacing: 0.18em;
+}
+
+.note-lock-error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: hsl(var(--destructive));
+}
+
+.note-lock-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.note-lock-cancel,
+.note-lock-confirm {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.note-lock-cancel {
+  border: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--ink-2);
+}
+
+.note-lock-confirm {
+  border: 0;
+  background: var(--ink);
+  color: var(--card-raw);
+}
+
+.note-lock-confirm:disabled {
+  opacity: 0.5;
+}
+
+.note-locked-panel {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 28px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.36);
+  font-size: 13px;
+}
+
+.note-locked-panel button {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card-raw);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
 }
 
 /* Inline rename input inside a notepad row. Sits where the title lives

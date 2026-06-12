@@ -3,11 +3,10 @@ import path from 'path';
 
 // `root: 'src/renderer'` makes Vite resolve `build.outDir` relative to
 // that folder by default, so without an explicit absolute outDir the
-// renderer ends up at `src/renderer/.vite/renderer/main_window/` —
-// which Forge's Vite plugin doesn't know about and silently doesn't
-// copy into the packaged app, producing a blank white window.
+// renderer ends up at `src/renderer/.vite/renderer/main_window/`.
 // Pin the outDir to the project root's `.vite/renderer/main_window/`
-// so the Forge plugin picks it up and packages it into `app.asar`.
+// so both local Electron launches and electron-builder packaging load the
+// same renderer files.
 export default defineConfig({
   root: 'src/renderer',
   // Use relative asset URLs so the built index.html / overlay.html work
@@ -20,6 +19,12 @@ export default defineConfig({
     outDir: path.resolve(__dirname, '.vite/renderer/main_window'),
     emptyOutDir: true,
     rollupOptions: {
+      // framer-motion ships "use client" directives that are meaningless
+      // outside React Server Components; Rollup warns on every file.
+      onwarn(warning, warn) {
+        if (warning.code === 'MODULE_LEVEL_DIRECTIVE') return;
+        warn(warning);
+      },
       input: {
         main_window: path.resolve(__dirname, 'src/renderer/index.html'),
         sticky_window: path.resolve(__dirname, 'src/renderer/sticky.html'),

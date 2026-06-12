@@ -9,13 +9,24 @@ function getTriggerPattern(trigger: string) {
   return new RegExp(`(^|[^A-Za-z0-9])(${escaped})(?=[^A-Za-z0-9]|$)`, 'gi');
 }
 
-export function expandSnippets(text: string, snippets: Snippet[]): string {
+export function expandSnippetsDetailed(
+  text: string,
+  snippets: Snippet[],
+): { text: string; usedSnippetIds: number[] } {
   let result = text;
+  const usedSnippetIds: number[] = [];
   const orderedSnippets = [...snippets].sort((a, b) => b.trigger.length - a.trigger.length);
 
   for (const snippet of orderedSnippets) {
     const regex = getTriggerPattern(snippet.trigger);
-    result = result.replace(regex, (_match, prefix) => `${prefix}${snippet.expansion}`);
+    result = result.replace(regex, (_match, prefix) => {
+      usedSnippetIds.push(snippet.id);
+      return `${prefix}${snippet.expansion}`;
+    });
   }
-  return result;
+  return { text: result, usedSnippetIds };
+}
+
+export function expandSnippets(text: string, snippets: Snippet[]): string {
+  return expandSnippetsDetailed(text, snippets).text;
 }

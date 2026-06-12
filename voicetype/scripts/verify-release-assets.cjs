@@ -17,6 +17,7 @@ const optionalAssets = [
 ];
 
 const missingRequired = requiredAssets.filter((assetPath) => !fs.existsSync(assetPath));
+const requireSigning = process.argv.includes('--require-signing');
 
 if (missingRequired.length > 0) {
   const missingList = missingRequired
@@ -43,7 +44,7 @@ if (missingRequired.length > 0) {
 // artifacts are generated.
 const lifecycleEvent = process.env.npm_lifecycle_event || '';
 const releaseLifecycles = new Set(['make', 'make:nsis', 'publish', 'publish:nsis']);
-const isReleaseBuild = releaseLifecycles.has(lifecycleEvent);
+const isReleaseBuild = requireSigning || releaseLifecycles.has(lifecycleEvent);
 const allowUnsigned = process.env.ECHO_ALLOW_UNSIGNED === '1';
 
 if (isReleaseBuild) {
@@ -58,14 +59,14 @@ if (isReleaseBuild) {
       );
     } else {
       console.error(
-        '\nCode-signing is required for `npm run ' + lifecycleEvent + '`.\n' +
+        '\nCode-signing is required for this release build.\n' +
         '\n' +
         'Set both env vars before invoking this command:\n' +
         '  - SIGNING_CERT_PATH       absolute path to your .pfx / .p12 cert\n' +
         '  - SIGNING_CERT_PASSWORD   password for that cert\n' +
         '\n' +
         'If this is intentionally a local-only test build, opt out with:\n' +
-        '  ECHO_ALLOW_UNSIGNED=1 npm run ' + lifecycleEvent + '\n'
+        '  ECHO_ALLOW_UNSIGNED=1 npm run ' + (lifecycleEvent || 'make') + '\n'
       );
       process.exit(1);
     }

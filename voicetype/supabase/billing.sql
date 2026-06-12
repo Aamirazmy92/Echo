@@ -92,7 +92,9 @@ create or replace view public.usage_monthly as
     user_id,
     coalesce(sum(case when kind = 'transcribe' then audio_seconds end), 0)::bigint as audio_seconds_30d,
     count(*) filter (where kind = 'transcribe')::bigint as transcribe_calls_30d,
-    count(*) filter (where kind = 'cleanup')::bigint    as cleanup_calls_30d
+    count(*) filter (where kind = 'cleanup')::bigint    as cleanup_calls_30d,
+    coalesce(sum(case when kind = 'cleanup' then tokens_in end), 0)::bigint  as cleanup_tokens_in_30d,
+    coalesce(sum(case when kind = 'cleanup' then tokens_out end), 0)::bigint as cleanup_tokens_out_30d
   from public.usage_events
   where created_at > now() - interval '30 days'
   group by user_id;
@@ -124,6 +126,7 @@ create policy usage_events_self_select
 -- only ever read the caller's own row).
 --
 -- FAIR_USE_AUDIO_SECONDS = 50 hours/30 days = 180_000 seconds.
+-- FAIR_USE_CLEANUP_CALLS = 5,000 cleanup calls/30 days.
 create or replace function public.entitlements()
 returns jsonb
 language plpgsql
@@ -134,9 +137,11 @@ as $$
 declare
   uid uuid := auth.uid();
   fair_use_cap constant bigint := 50 * 60 * 60;  -- 50 hours in seconds
+  cleanup_call_cap constant bigint := 5000;
   admin_grant record;
   sub record;
   used bigint;
+  cleanup_used bigint;
   remaining bigint;
   is_pro boolean;
 begin
@@ -159,6 +164,9 @@ begin
       'fairUseCapSeconds',     0,
       'fairUseUsedSeconds',    0,
       'fairUseRemainingSeconds', 0,
+      'cleanupCallCap',        0,
+      'cleanupCallsUsed',      0,
+      'cleanupCallsRemaining', 0,
       'fairUseExceeded',       false
     );
   end if;
@@ -169,10 +177,14 @@ begin
 
   is_pro := sub.status in ('active', 'trialing');
 
-  select coalesce(audio_seconds_30d, 0) into used
+  select
+    coalesce(audio_seconds_30d, 0),
+    coalesce(cleanup_calls_30d, 0)
+    into used, cleanup_used
     from public.usage_monthly
     where user_id = uid;
   used := coalesce(used, 0);
+  cleanup_used := coalesce(cleanup_used, 0);
   remaining := greatest(fair_use_cap - used, 0);
 
   return jsonb_build_object(
@@ -185,7 +197,10 @@ begin
     'fairUseCapSeconds',     fair_use_cap,
     'fairUseUsedSeconds',    used,
     'fairUseRemainingSeconds', remaining,
-    'fairUseExceeded',       is_pro and used >= fair_use_cap
+    'cleanupCallCap',        cleanup_call_cap,
+    'cleanupCallsUsed',      cleanup_used,
+    'cleanupCallsRemaining', greatest(cleanup_call_cap - cleanup_used, 0),
+    'fairUseExceeded',       is_pro and (used >= fair_use_cap or cleanup_used >= cleanup_call_cap)
   );
 end;
 $$;

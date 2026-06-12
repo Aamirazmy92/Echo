@@ -12,6 +12,8 @@ export type Tab = {
   noteId?: number;
   title: string;
   body: string;
+  locked: boolean;
+  lockUnlocked: boolean;
 };
 
 export type AttachedNotePayload = {
@@ -34,7 +36,7 @@ const SAVE_DEBOUNCE_MS = 700;
 export function useNoteTabs(initialNoteId: number | undefined) {
   const initialTabId = useMemo(() => newClientId(), []);
   const [tabs, setTabs] = useState<Tab[]>(() => [
-    { clientId: initialTabId, noteId: initialNoteId, title: 'Untitled', body: '' },
+    { clientId: initialTabId, noteId: initialNoteId, title: 'Untitled', body: '', locked: false, lockUnlocked: true },
   ]);
   const [activeTabId, setActiveTabId] = useState(initialTabId);
   const [notes, setNotes] = useState<Note[]>([]);
@@ -72,6 +74,11 @@ export function useNoteTabs(initialNoteId: number | undefined) {
         .then(async () => {
           const cleanBody = sanitizeNoteHtml(body);
           const resolvedNoteId = noteId ?? noteIdsRef.current[clientId];
+          const currentTab = tabs.find((tab) => tab.clientId === clientId);
+          if (currentTab?.locked && !currentTab.lockUnlocked) {
+            setSaveStatus('idle');
+            return;
+          }
           if (!resolvedNoteId && !noteHtmlHasMeaningfulContent(cleanBody)) {
             setSaveStatus('idle');
             return;
@@ -92,7 +99,14 @@ export function useNoteTabs(initialNoteId: number | undefined) {
             setTabs((prev) =>
               prev.map((t) =>
                 t.clientId === clientId
-                  ? { ...t, noteId: saved.id, title: saved.title, body: hasNewerDraft ? t.body : saved.body }
+                  ? {
+                      ...t,
+                      noteId: saved.id,
+                      title: saved.title,
+                      body: hasNewerDraft ? t.body : saved.body,
+                      locked: saved.locked,
+                      lockUnlocked: saved.lockUnlocked,
+                    }
                   : t,
               ),
             );
@@ -110,7 +124,7 @@ export function useNoteTabs(initialNoteId: number | undefined) {
         }
       });
     },
-    [],
+    [tabs],
   );
 
   const scheduleSave = useCallback(
@@ -158,7 +172,13 @@ export function useNoteTabs(initialNoteId: number | undefined) {
         bodyDraftsRef.current[existing.clientId] = note.body;
         return prev.map((t) =>
           t.clientId === existing.clientId
-            ? { ...t, title: note.title || 'Untitled', body: note.body }
+            ? {
+                ...t,
+                title: note.title || 'Untitled',
+                body: note.body,
+                locked: note.locked,
+                lockUnlocked: note.lockUnlocked,
+              }
             : t,
         );
       }
@@ -167,7 +187,14 @@ export function useNoteTabs(initialNoteId: number | undefined) {
       bodyDraftsRef.current[id] = note.body;
       return [
         ...prev,
-        { clientId: id, noteId: note.id, title: note.title || 'Untitled', body: note.body },
+        {
+          clientId: id,
+          noteId: note.id,
+          title: note.title || 'Untitled',
+          body: note.body,
+          locked: note.locked,
+          lockUnlocked: note.lockUnlocked,
+        },
       ];
     });
   }, []);
@@ -181,7 +208,14 @@ export function useNoteTabs(initialNoteId: number | undefined) {
           bodyDraftsRef.current[existing.clientId] = note.body;
           return prev.map((t) =>
             t.clientId === existing.clientId
-              ? { ...t, title: note.title || 'Untitled', body: note.body, noteId: note.noteId }
+              ? {
+                  ...t,
+                  title: note.title || 'Untitled',
+                  body: note.body,
+                  noteId: note.noteId,
+                  locked: false,
+                  lockUnlocked: true,
+                }
               : t,
           );
         }
@@ -206,6 +240,8 @@ export function useNoteTabs(initialNoteId: number | undefined) {
             noteId: note.noteId,
             title: note.title || 'Untitled',
             body: note.body,
+            locked: false,
+            lockUnlocked: true,
           },
         ];
       }
@@ -215,14 +251,21 @@ export function useNoteTabs(initialNoteId: number | undefined) {
       bodyDraftsRef.current[id] = note.body;
       return [
         ...prev,
-        { clientId: id, noteId: note.noteId, title: note.title || 'Untitled', body: note.body },
+        {
+          clientId: id,
+          noteId: note.noteId,
+          title: note.title || 'Untitled',
+          body: note.body,
+          locked: false,
+          lockUnlocked: true,
+        },
       ];
     });
   }, []);
 
   const addNewTab = useCallback(() => {
     const id = newClientId();
-    setTabs((prev) => [...prev, { clientId: id, title: 'Untitled', body: '' }]);
+    setTabs((prev) => [...prev, { clientId: id, title: 'Untitled', body: '', locked: false, lockUnlocked: true }]);
     setActiveTabId(id);
   }, []);
 
@@ -261,6 +304,10 @@ export function useNoteTabs(initialNoteId: number | undefined) {
       }
 
       const body = getTabBody(tab);
+      if (tab?.locked && !tab.lockUnlocked) {
+        removeTabFromWindow(clientId);
+        return;
+      }
       if (tab && (tab.noteId || noteHtmlHasMeaningfulContent(body))) {
         void persist(tab.clientId, tab.title, body, tab.noteId).finally(() => {
           removeTabFromWindow(clientId);
@@ -326,7 +373,14 @@ export function useNoteTabs(initialNoteId: number | undefined) {
         setTabs((prev) =>
           prev.map((t, i) =>
             i === 0
-              ? { ...t, noteId: note.id, title: note.title || 'Untitled', body: note.body }
+              ? {
+                  ...t,
+                  noteId: note.id,
+                  title: note.title || 'Untitled',
+                  body: note.body,
+                  locked: note.locked,
+                  lockUnlocked: note.lockUnlocked,
+                }
               : t,
           ),
         );
@@ -388,7 +442,8 @@ export function useNoteTabs(initialNoteId: number | undefined) {
       ? notes.filter(
           (n) =>
             n.title.toLowerCase().includes(q) ||
-            noteHtmlToPlainText(n.body).toLowerCase().includes(q),
+            ((!n.locked || n.lockUnlocked) &&
+              noteHtmlToPlainText(n.body).toLowerCase().includes(q)),
         )
       : [...notes];
     list.sort((a, b) => {

@@ -63,6 +63,8 @@ export interface Snippet {
   category: string              // folder/category e.g. "Email", "Code", "General"
   shared: boolean
   createdAt: string
+  useCount: number              // local-only usage telemetry (times expanded)
+  lastUsedAt: string | null
 }
 
 export interface SnippetInput {
@@ -80,6 +82,8 @@ export interface Note {
   createdAt: string
   updatedAt: string
   pinned: boolean
+  locked: boolean
+  lockUnlocked: boolean
 }
 
 export interface NoteInput {

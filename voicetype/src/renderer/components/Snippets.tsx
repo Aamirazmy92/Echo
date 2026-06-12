@@ -55,6 +55,16 @@ export default function SnippetsView() {
 
   useEffect(() => {
     void load();
+    const offSynced = window.api.onSyncedDataUpdated?.(({ tables }) => {
+      if (tables.includes('snippets')) void load();
+    });
+    const offCleared = window.api.onLocalDataCleared?.(() => {
+      void load();
+    });
+    return () => {
+      if (typeof offSynced === 'function') offSynced();
+      if (typeof offCleared === 'function') offCleared();
+    };
   }, []);
 
   useEffect(() => {
@@ -68,19 +78,6 @@ export default function SnippetsView() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isModalOpen]);
-
-  // Stable per-session "used" counts so the "Most used" sort + UI badge feel
-  // alive even before we wire real telemetry. Keyed by snippet id so the
-  // number doesn't shift while the user is reading. Replace with a real
-  // counter once usage telemetry lands.
-  const usageById = useMemo(() => {
-    const map: Record<number, number> = {};
-    for (const item of snippets) {
-      const seed = Math.abs(Math.sin(item.id * 9301 + 49297) * 233280);
-      map[item.id] = Math.round((seed % 200) + 5);
-    }
-    return map;
-  }, [snippets]);
 
   const categories = useMemo(() => {
     const counts = new Map<string, number>();
@@ -105,7 +102,13 @@ export default function SnippetsView() {
 
     return filtered.sort((left, right) => {
       if (sortMode === 'mostUsed') {
-        return (usageById[right.id] ?? 0) - (usageById[left.id] ?? 0);
+        // Real per-device usage counts; recently used breaks ties, then
+        // alphabetical so the order is stable for unused shortcuts.
+        if (right.useCount !== left.useCount) return right.useCount - left.useCount;
+        const leftUsed = Date.parse(left.lastUsedAt || '') || 0;
+        const rightUsed = Date.parse(right.lastUsedAt || '') || 0;
+        if (rightUsed !== leftUsed) return rightUsed - leftUsed;
+        return left.trigger.localeCompare(right.trigger, undefined, { sensitivity: 'base' });
       }
       if (sortMode === 'alphabetical') {
         return left.trigger.localeCompare(right.trigger, undefined, { sensitivity: 'base' });
@@ -115,7 +118,7 @@ export default function SnippetsView() {
       const rightTime = Date.parse(right.createdAt || '') || 0;
       return sortMode === 'newest' ? rightTime - leftTime : leftTime - rightTime;
     });
-  }, [snippets, activeCategory, search, sortMode, usageById]);
+  }, [snippets, activeCategory, search, sortMode]);
 
   const openCreate = () => {
     setDraft(emptyDraft);

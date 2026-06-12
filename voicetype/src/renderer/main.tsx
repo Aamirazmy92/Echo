@@ -174,7 +174,7 @@ root.render(
 // loaded settings. A minimum display time prevents a jarring flash on fast
 // launches; a safety timeout guarantees the splash never stays stuck.
 const SPLASH_SHOWN_AT = Date.now();
-const SPLASH_MIN_VISIBLE_MS = 700;   // polished, intentional feel
+const SPLASH_MIN_VISIBLE_MS = 420;   // quick handoff on fast launches
 const SPLASH_MAX_VISIBLE_MS = 6000;  // absolute safety cap
 
 let splashDismissed = false;
@@ -190,7 +190,7 @@ const removeSplashNode = () => {
     // Fallback in case `transitionend` never fires (reduced-motion users get
     // an instant hide, but the node still needs to be detached).
     window.setTimeout(cleanup, 800);
-  }, 260);
+  }, 110);
 };
 
 const dismissSplash = () => {

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { Search, Plus, Pencil, Trash2, MoreHorizontal, Pin, PinOff } from 'lucide-react';
+import { Search, Plus, Pencil, Trash2, MoreHorizontal, Pin, PinOff, LockKeyhole, UnlockKeyhole } from 'lucide-react';
 import { toast } from './toast/useToast';
 import type { Note } from '../../shared/types';
 import ConfirmationModal from './ConfirmationModal';
+import NoteLockModal from './NoteLockModal';
 import { noteHtmlToPlainText, sanitizeNoteHtml } from '../lib/noteRichText';
 import { normalizeLinkUrl } from './sticky/useRichTextEditor';
 import { rowActionsClassName } from '../lib/rowActions';
@@ -63,6 +64,11 @@ export default function NotepadView() {
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
+  const [lockDialog, setLockDialog] = useState<{
+    note: Note;
+    mode: 'setup' | 'unlock' | 'remove';
+  } | null>(null);
+  const [lockError, setLockError] = useState<string | null>(null);
 
   // Close the row menu when clicking outside the menu or its trigger button.
   useEffect(() => {
@@ -98,8 +104,12 @@ export default function NotepadView() {
     const off = window.api.onNotesUpdated?.(() => {
       void load();
     });
+    const offCleared = window.api.onLocalDataCleared?.(() => {
+      void load();
+    });
     return () => {
       if (typeof off === 'function') off();
+      if (typeof offCleared === 'function') offCleared();
     };
   }, [load]);
 
@@ -109,7 +119,8 @@ export default function NotepadView() {
       ? notes.filter(
           (n) =>
             n.title.toLowerCase().includes(q) ||
-            noteHtmlToPlainText(n.body).toLowerCase().includes(q),
+            ((!n.locked || n.lockUnlocked) &&
+              noteHtmlToPlainText(n.body).toLowerCase().includes(q)),
         )
       : notes;
     // Stable sort: pinned notes first, then preserve incoming order
@@ -126,6 +137,12 @@ export default function NotepadView() {
   );
 
   const openNote = (note?: Note) => {
+    if (note?.locked && !note.lockUnlocked) {
+      setSelectedId(note.id);
+      setLockError(null);
+      setLockDialog({ note, mode: 'unlock' });
+      return;
+    }
     void window.api.openStickyNoteWindow(note?.id);
   };
 
@@ -153,6 +170,64 @@ export default function NotepadView() {
       );
     } catch {
       toast.error(note.pinned ? 'Could not unpin note.' : 'Could not pin note.');
+    }
+  };
+
+  const mergeUpdatedNote = useCallback((updated: Note) => {
+    setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)));
+  }, []);
+
+  const openLockDialog = (note: Note, mode: 'setup' | 'unlock' | 'remove') => {
+    setOpenMenuId(null);
+    setLockError(null);
+    setLockDialog({ note, mode });
+  };
+
+  const handleRelock = async (note: Note) => {
+    try {
+      const updated = await window.api.relockNote(note.id);
+      if (updated) mergeUpdatedNote(updated);
+      toast.success('Note locked');
+    } catch {
+      toast.error('Could not lock note.');
+    }
+  };
+
+  const handleLockDialogSubmit = async (code: string) => {
+    if (!lockDialog) return;
+    setLockError(null);
+    try {
+      if (lockDialog.mode === 'setup') {
+        const updated = await window.api.lockNote(lockDialog.note.id, code);
+        mergeUpdatedNote(updated);
+        setLockDialog(null);
+        toast.success('Note locked');
+        return;
+      }
+
+      if (lockDialog.mode === 'unlock') {
+        const result = await window.api.unlockNote(lockDialog.note.id, code);
+        if (!result.ok) {
+          setLockError('Incorrect code.');
+          return;
+        }
+        mergeUpdatedNote(result.note);
+        setLockDialog(null);
+        openNote(result.note);
+        return;
+      }
+
+      const unlock = await window.api.unlockNote(lockDialog.note.id, code);
+      if (!unlock.ok) {
+        setLockError('Incorrect code.');
+        return;
+      }
+      const updated = await window.api.removeNoteLock(lockDialog.note.id);
+      mergeUpdatedNote(updated);
+      setLockDialog(null);
+      toast.success('Lock removed');
+    } catch (error) {
+      setLockError(error instanceof Error ? error.message : 'Could not update note lock.');
     }
   };
 
@@ -288,7 +363,8 @@ export default function NotepadView() {
           ) : (
             <div>
               {filtered.map((note) => {
-                const preview = noteHtmlToPlainText(note.body);
+                const isLockedClosed = note.locked && !note.lockUnlocked;
+                const preview = isLockedClosed ? 'Locked' : noteHtmlToPlainText(note.body);
                 const isActive = selectedNote?.id === note.id;
                 const isMenuOpen = openMenuId === note.id;
                 const isRenaming = renamingId === note.id;
@@ -349,6 +425,13 @@ export default function NotepadView() {
                             aria-label="Pinned"
                           />
                         )}
+                        {note.locked && (
+                          <LockKeyhole
+                            size={11}
+                            style={{ flexShrink: 0, color: 'var(--ink-muted)' }}
+                            aria-label="Locked"
+                          />
+                        )}
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {note.title || 'Untitled'}
                         </span>
@@ -381,7 +464,8 @@ export default function NotepadView() {
                           role="menuitem"
                           onClick={() => {
                             setOpenMenuId(null);
-                            startRename(note);
+                            if (note.locked && !note.lockUnlocked) openLockDialog(note, 'unlock');
+                            else startRename(note);
                           }}
                         >
                           <Pencil size={12} />
@@ -398,6 +482,49 @@ export default function NotepadView() {
                           {note.pinned ? <PinOff size={12} /> : <Pin size={12} />}
                           {note.pinned ? 'Unpin' : 'Pin'}
                         </button>
+                        {!note.locked && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => openLockDialog(note, 'setup')}
+                          >
+                            <LockKeyhole size={12} />
+                            Lock
+                          </button>
+                        )}
+                        {note.locked && !note.lockUnlocked && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => openLockDialog(note, 'unlock')}
+                          >
+                            <UnlockKeyhole size={12} />
+                            Unlock
+                          </button>
+                        )}
+                        {note.locked && note.lockUnlocked && (
+                          <>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setOpenMenuId(null);
+                                void handleRelock(note);
+                              }}
+                            >
+                              <LockKeyhole size={12} />
+                              Lock now
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => openLockDialog(note, 'remove')}
+                            >
+                              <UnlockKeyhole size={12} />
+                              Remove lock
+                            </button>
+                          </>
+                        )}
                         <button
                           type="button"
                           role="menuitem"
@@ -441,6 +568,22 @@ export default function NotepadView() {
               <div className={rowActionsClassName(deleteTarget?.id === selectedNote.id)}>
                 <button
                   type="button"
+                  title={selectedNote.locked && !selectedNote.lockUnlocked ? 'Unlock note' : 'Lock note'}
+                  onClick={() => {
+                    if (!selectedNote.locked) openLockDialog(selectedNote, 'setup');
+                    else if (selectedNote.lockUnlocked) void handleRelock(selectedNote);
+                    else openLockDialog(selectedNote, 'unlock');
+                  }}
+                  className="echo-icon-btn plain"
+                >
+                  {selectedNote.locked && !selectedNote.lockUnlocked ? (
+                    <UnlockKeyhole size={14} />
+                  ) : (
+                    <LockKeyhole size={14} />
+                  )}
+                </button>
+                <button
+                  type="button"
                   title="Edit note"
                   onClick={() => openNote(selectedNote)}
                   className="echo-icon-btn plain"
@@ -466,21 +609,33 @@ export default function NotepadView() {
             >
               {formatNoteHeaderMeta(
                 selectedNote.updatedAt || selectedNote.createdAt,
-                wordCountFromHtml(selectedNote.body),
+                selectedNote.locked && !selectedNote.lockUnlocked
+                  ? 0
+                  : wordCountFromHtml(selectedNote.body),
               )}
             </div>
-            <div
-              className="echo-note-reader"
-              onClick={handleReaderLinkActivation}
-              style={{
-                marginTop: 28,
-                fontFamily: 'var(--font-display)',
-                fontSize: 17,
-                lineHeight: 1.7,
-                color: 'var(--ink-2)',
-              }}
-              dangerouslySetInnerHTML={{ __html: renderedBody }}
-            />
+            {selectedNote.locked && !selectedNote.lockUnlocked ? (
+              <div className="note-locked-panel">
+                <LockKeyhole size={20} />
+                <div>This note is locked.</div>
+                <button type="button" onClick={() => openLockDialog(selectedNote, 'unlock')}>
+                  Unlock
+                </button>
+              </div>
+            ) : (
+              <div
+                className="echo-note-reader"
+                onClick={handleReaderLinkActivation}
+                style={{
+                  marginTop: 28,
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 17,
+                  lineHeight: 1.7,
+                  color: 'var(--ink-2)',
+                }}
+                dangerouslySetInnerHTML={{ __html: renderedBody }}
+              />
+            )}
           </div>
         ) : (
           <div
@@ -506,6 +661,17 @@ export default function NotepadView() {
         confirmLabel="Delete"
         onConfirm={handleDelete}
         onClose={() => setDeleteTarget(null)}
+      />
+      <NoteLockModal
+        open={lockDialog !== null}
+        mode={lockDialog?.mode ?? 'unlock'}
+        noteTitle={lockDialog?.note.title ?? ''}
+        error={lockError}
+        onSubmit={handleLockDialogSubmit}
+        onClose={() => {
+          setLockDialog(null);
+          setLockError(null);
+        }}
       />
     </div>
   );

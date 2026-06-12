@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, session, shell, screen, crashReporter, clipboard, type Rectangle } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, session, shell, screen, crashReporter, clipboard, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import {
@@ -20,6 +20,7 @@ import {
   sendPasswordReset,
   startGoogleSignIn,
   completeOAuthCallback,
+  isExpectedOAuthCallbackUrl,
   serialiseSession,
   isAuthConfigured,
   onAuthStateChange,
@@ -43,7 +44,8 @@ import {
 import { createTray, refreshTrayMenu, updateTrayState } from './tray';
 import { registerHotkeys, getActiveAppName, prewarmActiveAppDetection, refreshActiveAppName, resetHotkeyState, suspendHotkey, unregisterAll as unregisterAllHotkeys } from './hotkey';
 import { applyDictionary } from './dictionary';
-import { expandSnippets } from './snippets';
+import { getWeekStartIso } from './usageWindow';
+import { expandSnippetsDetailed } from './snippets';
 import { injectText, prewarmInjectHelper, shutdownInjectHelper } from './inject';
 import { createOverlay, updateOverlayState, getOverlayWindow, scheduleOverlayIdle, ensureOverlayVisible, repositionOverlay, allowOverlayDisplay } from './overlay';
 import { resolveGlobalStyle } from '../shared/styleConfig';
@@ -57,6 +59,7 @@ import {
   sanitizeExportFormat,
   sanitizeHistoryText,
   sanitizeNoteInputPayload,
+  sanitizeNoteLockCode,
   sanitizePagination,
   sanitizeSettingsUpdate,
   sanitizeSnippetInputPayload,
@@ -127,6 +130,7 @@ const stickyNoteWindows = new Set<BrowserWindow>();
 // Used to resolve which overlapping window receives a torn-out tab on drop.
 const stickyNoteFocusOrder: BrowserWindow[] = [];
 const expandedStickyNoteWindows = new WeakSet<BrowserWindow>();
+const unlockedNoteIds = new Set<number>();
 let warmStickyNoteWindow: BrowserWindow | null = null;
 let isQuitting = false;
 let lastInjectedFingerprint = '';
@@ -180,6 +184,19 @@ async function ensureHistoryModule() {
   }
 
   return history;
+}
+
+function noteForRenderer(note: Note): Note {
+  const lockUnlocked = !note.locked || unlockedNoteIds.has(note.id);
+  return {
+    ...note,
+    body: lockUnlocked ? note.body : '',
+    lockUnlocked,
+  };
+}
+
+function notesForRenderer(notes: Note[]): Note[] {
+  return notes.map(noteForRenderer);
 }
 
 function startDeferredStartupTasks() {
@@ -315,17 +332,8 @@ type BasicUsageLimitPayload = BasicUsageSnapshot & {
   message: string;
 };
 
-function getStartOfWeek(date: Date): Date {
-  const start = new Date(date);
-  const day = start.getDay();
-  const daysSinceMonday = (day + 6) % 7;
-  start.setDate(start.getDate() - daysSinceMonday);
-  start.setHours(0, 0, 0, 0);
-  return start;
-}
-
 function countWordsThisWeek(entries: Array<{ wordCount: number; createdAt: string }>): number {
-  const weekStart = getStartOfWeek(new Date());
+  const weekStart = new Date(getWeekStartIso());
   return entries.reduce((total, entry) => {
     const createdAt = new Date(entry.createdAt);
     if (Number.isNaN(createdAt.getTime()) || createdAt < weekStart) return total;
@@ -499,9 +507,49 @@ if (!hasSingleInstanceLock) {
 
 let ipcsRegistered = false;
 
+function isTrustedAppSender(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!senderWindow || senderWindow.isDestroyed()) return false;
+  if (mainWindow && senderWindow === mainWindow) return true;
+  if (stickyNoteWindows.has(senderWindow)) return true;
+  // The prewarmed sticky window is intentionally absent from
+  // stickyNoteWindows (countAsOpen: false) but its renderer still makes
+  // boot-time IPC calls (settings, notes) that must not be rejected.
+  if (warmStickyNoteWindow && senderWindow === warmStickyNoteWindow) return true;
+  const overlayWindow = getOverlayWindow();
+  return !!overlayWindow && senderWindow === overlayWindow;
+}
+
+function assertTrustedAppSender(event: IpcMainInvokeEvent): void {
+  if (isTrustedAppSender(event)) return;
+  const url = event.senderFrame?.url ?? event.sender.getURL();
+  logWarn('ipc', `blocked invoke from untrusted sender on ${event.processId}:${event.frameId} (${url})`);
+  throw new Error('Untrusted IPC sender.');
+}
+
+const trustedIpcMain = {
+  handle(channel: string, listener: (event: IpcMainInvokeEvent, ...args: any[]) => unknown): void {
+    ipcMain.handle(channel, (event, ...args) => {
+      assertTrustedAppSender(event);
+      return listener(event, ...args);
+    });
+  },
+  on(channel: string, listener: (event: IpcMainEvent, ...args: any[]) => void): void {
+    ipcMain.on(channel, (event, ...args) => {
+      if (!isTrustedAppSender(event)) {
+        const url = event.senderFrame?.url ?? event.sender.getURL();
+        logWarn('ipc', `blocked send from untrusted sender on ${event.processId}:${event.frameId} (${url})`);
+        return;
+      }
+      listener(event, ...args);
+    });
+  },
+};
+
 function registerAllIpcs() {
   if (ipcsRegistered) return;
   ipcsRegistered = true;
+  const ipcMain = trustedIpcMain;
 
   // Handle IPCs
   ipcMain.handle('get-app-version', () => app.getVersion());
@@ -644,7 +692,7 @@ function registerAllIpcs() {
   });
   ipcMain.handle('get-notes', async () => {
     const history = await ensureHistoryModule();
-    return history.getNotes();
+    return notesForRenderer(history.getNotes());
   });
   ipcMain.handle('open-sticky-note-window', async (_, noteId?: number, options?: unknown) => {
     await openStickyNoteWindow(noteId, options);
@@ -670,15 +718,55 @@ function registerAllIpcs() {
   });
   ipcMain.handle('save-note', async (_, note: unknown) => {
     const history = await ensureHistoryModule();
-    const result = history.saveNote(sanitizeNoteInputPayload(note));
+    const sanitized = sanitizeNoteInputPayload(note);
+    if (sanitized.id && history.isNoteLocked(sanitized.id) && !unlockedNoteIds.has(sanitized.id)) {
+      throw new Error('Unlock this note before editing it.');
+    }
+    const result = history.saveNote(sanitized);
     broadcastNotesUpdated();
-    return result;
+    return noteForRenderer(result);
   });
   ipcMain.handle('toggle-note-pin', async (_, id: number, pinned: boolean) => {
     const history = await ensureHistoryModule();
     const result = history.toggleNotePin(sanitizeEntryId(id), pinned);
     broadcastNotesUpdated();
-    return result;
+    return noteForRenderer(result);
+  });
+  ipcMain.handle('lock-note', async (_, id: number, code: unknown) => {
+    const history = await ensureHistoryModule();
+    const noteId = sanitizeEntryId(id);
+    const result = history.setNoteLock(noteId, sanitizeNoteLockCode(code));
+    unlockedNoteIds.delete(noteId);
+    broadcastNotesUpdated();
+    return noteForRenderer(result);
+  });
+  ipcMain.handle('unlock-note', async (_, id: number, code: unknown) => {
+    const history = await ensureHistoryModule();
+    const noteId = sanitizeEntryId(id);
+    const result = history.unlockNote(noteId, sanitizeNoteLockCode(code));
+    if (!result) return { ok: false };
+    unlockedNoteIds.add(noteId);
+    broadcastNotesUpdated();
+    return { ok: true, note: noteForRenderer(result) };
+  });
+  ipcMain.handle('relock-note', async (_, id: number) => {
+    const history = await ensureHistoryModule();
+    const noteId = sanitizeEntryId(id);
+    unlockedNoteIds.delete(noteId);
+    const note = history.getNote(noteId);
+    broadcastNotesUpdated();
+    return note ? noteForRenderer(note) : null;
+  });
+  ipcMain.handle('remove-note-lock', async (_, id: number) => {
+    const history = await ensureHistoryModule();
+    const noteId = sanitizeEntryId(id);
+    if (history.isNoteLocked(noteId) && !unlockedNoteIds.has(noteId)) {
+      throw new Error('Unlock this note before removing its lock.');
+    }
+    const result = history.removeNoteLock(noteId);
+    unlockedNoteIds.delete(noteId);
+    broadcastNotesUpdated();
+    return noteForRenderer(result);
   });
   ipcMain.handle('delete-note', async (_, id: number) => {
     const history = await ensureHistoryModule();
@@ -848,9 +936,19 @@ function registerAllIpcs() {
         return;
       }
       const dictionaryApplied = applyDictionary(cleaned, history.getDictionaryItems());
-      const finalText = expandSnippets(dictionaryApplied, history.getSnippets());
+      const { text: finalText, usedSnippetIds } = expandSnippetsDetailed(
+        dictionaryApplied,
+        history.getSnippets(),
+      );
       if (isCancelled()) {
         return;
+      }
+      if (usedSnippetIds.length > 0) {
+        try {
+          history.recordSnippetUsage(usedSnippetIds);
+        } catch {
+          // Usage telemetry is best-effort; never block the dictation.
+        }
       }
 
       if (!finalText.trim()) {
@@ -969,6 +1067,11 @@ function registerAllIpcs() {
     }
 
     mainWindow.maximize();
+  });
+
+  ipcMain.handle('window-is-maximized', (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    return target ? target.isMaximized() : false;
   });
 
   ipcMain.on('window-close', () => {
@@ -1256,7 +1359,8 @@ function loadStickyNoteRenderer(stickyWindow: BrowserWindow): void {
 
 async function resolveStickyNoteById(noteId: number): Promise<Note | undefined> {
   const history = await ensureHistoryModule();
-  return history.getNotes().find((note) => note.id === noteId);
+  const note = history.getNote(noteId);
+  return note ? noteForRenderer(note) : undefined;
 }
 
 function sendOpenNoteInSticky(stickyWindow: BrowserWindow, note: Note): void {
@@ -1643,8 +1747,16 @@ function attachWindowStatePersistence(window: BrowserWindow, restoreMaximized: b
   // a single overload signature).
   window.on('resize', scheduleWindowBoundsSave);
   window.on('move', scheduleWindowBoundsSave);
+  // Keep the renderer's maximize/restore titlebar button in sync.
+  const sendMaximizedState = (maximized: boolean) => () => {
+    if (!window.isDestroyed()) {
+      window.webContents.send('window-maximized-state', maximized);
+    }
+  };
   window.on('maximize', scheduleWindowBoundsSave);
+  window.on('maximize', sendMaximizedState(true));
   window.on('unmaximize', scheduleWindowBoundsSave);
+  window.on('unmaximize', sendMaximizedState(false));
 }
 
 function resolveAssetPath(filename: string): string {
@@ -1719,9 +1831,8 @@ const createWindow = () => {
     Boolean((loginItemSettings as { wasOpenedAtLogin?: boolean }).wasOpenedAtLogin);
 
   // Resolve the brand icon for the window/taskbar. Packaged Windows builds
-  // also pick the .exe icon up from the binary's resource table (set by
-  // electron-packager from `forge.config.ts`), but passing `icon` here makes
-  // the dev `npm start` taskbar match production.
+  // also pick the .exe icon up from the binary's resource table, but passing
+  // `icon` here makes the dev `npm start` taskbar match production.
   const iconPath = resolveAssetPath('icon.ico');
   const windowIcon = fs.existsSync(iconPath) ? iconPath : undefined;
 
@@ -1903,11 +2014,8 @@ app.on('ready', async () => {
     void cleanupLegacyChromiumCaches();
   }, 1000);
 
-  // In local development we either:
-  // 1. let the external dev supervisor restart Forge for main/preload/config
-  //    edits, or
-  // 2. fall back to the in-app bundle watcher when launched directly.
-  if (!app.isPackaged && process.env.ECHO_DEV_SUPERVISOR !== '1') {
+  // In local development, restart if the built main/preload bundles change.
+  if (!app.isPackaged) {
     setupMainProcessHotReload();
   }
 });
@@ -1926,8 +2034,11 @@ function handleDeepLink(url: string): void {
     }
     return;
   }
-  // Default: treat as an OAuth callback (echo://auth-callback?code=...)
-  void completeOAuthCallback(url);
+  if (isExpectedOAuthCallbackUrl(url)) {
+    void completeOAuthCallback(url);
+    return;
+  }
+  logWarn('protocol', `ignored unsupported deep link: ${url}`);
 }
 
 app.on('second-instance', (_event, argv) => {

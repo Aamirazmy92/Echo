@@ -43,6 +43,8 @@ type SnippetRow = {
   shared: number;
   created_at: string;
   cloud_id: string;
+  use_count: number | null;
+  last_used_at: string | null;
 };
 
 type DictionaryRow = {
@@ -53,6 +55,18 @@ type DictionaryRow = {
   shared: number;
   created_at: string;
   cloud_id: string;
+};
+
+type NoteRow = {
+  id: number;
+  title: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  pinned: number;
+  cloud_id: string;
+  lock_code_hash: string | null;
+  lock_code_salt: string | null;
 };
 
 export function getDb(): Database.Database {
@@ -97,6 +111,17 @@ export function clearLocalSyncedData(): void {
   notesCache = null;
 }
 
+/** Invalidate the in-memory cache for a table after the sync engine writes
+ *  rows directly via getDb(), bypassing the mutating helpers in this module.
+ *  Without this, pulled changes stay invisible until the app restarts. */
+export function invalidateCachesForTable(
+  table: 'dictations' | 'snippets' | 'dictionary_items' | 'notes' | 'custom_styles',
+): void {
+  if (table === 'snippets') snippetsCache = null;
+  else if (table === 'dictionary_items') dictionaryCache = null;
+  else if (table === 'notes') notesCache = null;
+}
+
 export function initHistory() {
   const dbPath = path.join(app.getPath('userData'), 'echo.db');
   db = new Database(dbPath);
@@ -135,7 +160,9 @@ export function initHistory() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL DEFAULT '',
       body TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT ''
+      created_at TEXT NOT NULL DEFAULT '',
+      lock_code_hash TEXT,
+      lock_code_salt TEXT
     );
 
     -- Sync state for outgoing changes. Every local mutation enqueues a
@@ -183,6 +210,14 @@ export function initHistory() {
   if (!snippetColumns.some(c => c.name === 'category')) {
     db.exec(`ALTER TABLE snippets ADD COLUMN category TEXT NOT NULL DEFAULT ''`);
   }
+  // Local-only usage telemetry. These columns deliberately stay out of the
+  // cloud sync payload — counts are per-device.
+  if (!snippetColumns.some(c => c.name === 'use_count')) {
+    db.exec(`ALTER TABLE snippets ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!snippetColumns.some(c => c.name === 'last_used_at')) {
+    db.exec(`ALTER TABLE snippets ADD COLUMN last_used_at TEXT`);
+  }
 
   const dictionaryColumns = db.pragma('table_info(dictionary_items)') as { name: string }[];
   if (!dictionaryColumns.some(c => c.name === 'misspelling')) {
@@ -196,6 +231,12 @@ export function initHistory() {
   const noteColumns = db.pragma('table_info(notes)') as { name: string }[];
   if (!noteColumns.some(c => c.name === 'pinned')) {
     db.exec(`ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!noteColumns.some(c => c.name === 'lock_code_hash')) {
+    db.exec(`ALTER TABLE notes ADD COLUMN lock_code_hash TEXT`);
+  }
+  if (!noteColumns.some(c => c.name === 'lock_code_salt')) {
+    db.exec(`ALTER TABLE notes ADD COLUMN lock_code_salt TEXT`);
   }
 
   // Create indexes for frequently queried columns
@@ -444,27 +485,39 @@ export function getStats(): { totalWords: number; totalSessions: number; todayWo
   };
 }
 
-export function getSnippets(): Snippet[] {
-  if (snippetsCache) return snippetsCache;
-  
-  const rows = db.prepare('SELECT * FROM snippets WHERE deleted_at IS NULL ORDER BY trigger COLLATE NOCASE ASC').all() as Array<{
-    id: number;
-    trigger: string;
-    expansion: string;
-    category: string;
-    shared: number;
-    created_at: string;
-  }>;
-
-  snippetsCache = rows.map((row) => ({
+function mapSnippetRow(row: SnippetRow): Snippet {
+  return {
     id: row.id,
     trigger: row.trigger,
     expansion: row.expansion,
     category: row.category ?? '',
     shared: Boolean(row.shared),
     createdAt: row.created_at,
-  }));
+    useCount: row.use_count ?? 0,
+    lastUsedAt: row.last_used_at ?? null,
+  };
+}
+
+export function getSnippets(): Snippet[] {
+  if (snippetsCache) return snippetsCache;
+
+  const rows = db.prepare('SELECT * FROM snippets WHERE deleted_at IS NULL ORDER BY trigger COLLATE NOCASE ASC').all() as SnippetRow[];
+
+  snippetsCache = rows.map(mapSnippetRow);
   return snippetsCache;
+}
+
+/** Increment local usage counters for snippets that expanded in a dictation.
+ *  Deliberately does not enqueue a sync op — usage stats are per-device. */
+export function recordSnippetUsage(ids: number[]): void {
+  if (ids.length === 0) return;
+  snippetsCache = null;
+  const nowIso = new Date().toISOString();
+  const stmt = db.prepare('UPDATE snippets SET use_count = use_count + 1, last_used_at = ? WHERE id = ?');
+  const apply = db.transaction((snippetIds: number[]) => {
+    for (const id of snippetIds) stmt.run(nowIso, id);
+  });
+  apply(ids);
 }
 
 function pushSnippetUpsert(row: { cloud_id: string; trigger: string; expansion: string; category: string; shared: number; created_at: string }) {
@@ -507,14 +560,7 @@ export function saveSnippet(snippet: SnippetInput): Snippet {
         shared: saved.shared,
         created_at: saved.created_at,
       });
-      return {
-        id: saved.id,
-        trigger: saved.trigger,
-        expansion: saved.expansion,
-        category: saved.category ?? '',
-        shared: Boolean(saved.shared),
-        createdAt: saved.created_at,
-      };
+      return mapSnippetRow(saved);
     }
   }
 
@@ -538,14 +584,7 @@ export function saveSnippet(snippet: SnippetInput): Snippet {
       shared: saved.shared,
       created_at: saved.created_at,
     });
-    return {
-      id: saved.id,
-      trigger: saved.trigger,
-      expansion: saved.expansion,
-      category: saved.category ?? '',
-      shared: Boolean(saved.shared),
-      createdAt: saved.created_at,
-    };
+    return mapSnippetRow(saved);
   }
 
   // Insert
@@ -569,6 +608,8 @@ export function saveSnippet(snippet: SnippetInput): Snippet {
     category: trimmedCategory,
     shared: Boolean(sharedFlag),
     createdAt: nowIso,
+    useCount: 0,
+    lastUsedAt: null,
   };
 }
 
@@ -582,32 +623,81 @@ export function deleteSnippet(id: number): void {
 
 // ── Notes ─────────────────────────────────────────────────────────────
 
-export function getNotes(): Note[] {
-  if (notesCache) return notesCache;
+const NOTE_LOCK_HASH_ITERATIONS = 120_000;
+const NOTE_LOCK_HASH_BYTES = 32;
+const NOTE_LOCK_DIGEST = 'sha256';
 
-  const rows = db.prepare(`
-    SELECT id, title, body, created_at, updated_at, pinned
-    FROM notes
-    WHERE deleted_at IS NULL
-    ORDER BY pinned DESC, updated_at DESC, created_at DESC
-  `).all() as Array<{
-    id: number;
-    title: string;
-    body: string;
-    created_at: string;
-    updated_at: string;
-    pinned: number;
-  }>;
+function hashNoteLockCode(code: string, salt: string): string {
+  return crypto
+    .pbkdf2Sync(code, salt, NOTE_LOCK_HASH_ITERATIONS, NOTE_LOCK_HASH_BYTES, NOTE_LOCK_DIGEST)
+    .toString('base64');
+}
 
-  notesCache = rows.map((row) => ({
+function verifyNoteLockCode(code: string, salt: string, expectedHash: string): boolean {
+  const actual = Buffer.from(hashNoteLockCode(code, salt), 'base64');
+  const expected = Buffer.from(expectedHash, 'base64');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function noteRowToNote(row: NoteRow): Note {
+  const locked = Boolean(row.lock_code_hash && row.lock_code_salt);
+  return {
     id: row.id,
     title: row.title,
     body: row.body,
     createdAt: row.created_at,
     updatedAt: row.updated_at || row.created_at,
     pinned: Boolean(row.pinned),
-  }));
+    locked,
+    lockUnlocked: false,
+  };
+}
+
+function pushNoteUpsert(row: NoteRow): void {
+  enqueueSync('notes', row.cloud_id, 'upsert', {
+    id: row.cloud_id,
+    title: row.title,
+    body: row.body,
+    pinned: Boolean(row.pinned),
+    lock_code_hash: row.lock_code_hash ?? null,
+    lock_code_salt: row.lock_code_salt ?? null,
+    client_created_at: row.created_at,
+    updated_at: row.updated_at || row.created_at,
+  });
+}
+
+function getNoteRowById(id: number): NoteRow | undefined {
+  return db.prepare(`
+    SELECT id, title, body, created_at, updated_at, pinned, cloud_id, lock_code_hash, lock_code_salt
+    FROM notes
+    WHERE id = ? AND deleted_at IS NULL
+  `).get(id) as NoteRow | undefined;
+}
+
+export function getNotes(): Note[] {
+  if (notesCache) return notesCache;
+
+  const rows = db.prepare(`
+    SELECT id, title, body, created_at, updated_at, pinned, cloud_id, lock_code_hash, lock_code_salt
+    FROM notes
+    WHERE deleted_at IS NULL
+    ORDER BY pinned DESC, updated_at DESC, created_at DESC
+  `).all() as NoteRow[];
+
+  notesCache = rows.map(noteRowToNote);
   return notesCache;
+}
+
+export function getNote(id: number): Note | null {
+  const row = getNoteRowById(id);
+  return row ? noteRowToNote(row) : null;
+}
+
+export function isNoteLocked(id: number): boolean {
+  const row = db
+    .prepare('SELECT lock_code_hash, lock_code_salt FROM notes WHERE id = ? AND deleted_at IS NULL')
+    .get(id) as { lock_code_hash?: string | null; lock_code_salt?: string | null } | undefined;
+  return Boolean(row?.lock_code_hash && row.lock_code_salt);
 }
 
 export function saveNote(note: NoteInput): Note {
@@ -627,69 +717,77 @@ export function saveNote(note: NoteInput): Note {
       SET title = ?, body = ?, updated_at = ?, cloud_id = COALESCE(cloud_id, ?)
       WHERE id = ?
     `).run(trimmedTitle, trimmedBody, nowIso, cloudId, note.id);
-    const pinned = Boolean(db.prepare('SELECT pinned FROM notes WHERE id = ?').pluck().get(note.id) as number | undefined);
-    enqueueSync('notes', cloudId, 'upsert', {
-      id: cloudId,
-      title: trimmedTitle,
-      body: trimmedBody,
-      client_created_at: createdAt,
-      updated_at: nowIso,
-    });
-    return {
-      id: note.id,
-      title: trimmedTitle,
-      body: trimmedBody,
-      createdAt,
-      updatedAt: nowIso,
-      pinned,
-    };
+    const row = getNoteRowById(note.id);
+    if (!row) throw new Error('Note not found.');
+    pushNoteUpsert({ ...row, cloud_id: cloudId, created_at: createdAt, updated_at: nowIso });
+    return noteRowToNote({ ...row, cloud_id: cloudId, created_at: createdAt, updated_at: nowIso });
   }
 
   const cloudId = crypto.randomUUID();
   const info = db.prepare(`
-    INSERT INTO notes (title, body, created_at, updated_at, cloud_id, pinned)
-    VALUES (?, ?, ?, ?, ?, 0)
+    INSERT INTO notes (title, body, created_at, updated_at, cloud_id, pinned, lock_code_hash, lock_code_salt)
+    VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)
   `).run(trimmedTitle, trimmedBody, nowIso, nowIso, cloudId);
-  enqueueSync('notes', cloudId, 'upsert', {
-    id: cloudId,
-    title: trimmedTitle,
-    body: trimmedBody,
-    client_created_at: nowIso,
-    updated_at: nowIso,
-  });
-  return {
+  const row: NoteRow = {
     id: info.lastInsertRowid as number,
     title: trimmedTitle,
     body: trimmedBody,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-    pinned: false,
+    created_at: nowIso,
+    updated_at: nowIso,
+    cloud_id: cloudId,
+    pinned: 0,
+    lock_code_hash: null,
+    lock_code_salt: null,
   };
+  pushNoteUpsert(row);
+  return noteRowToNote(row);
 }
 
 export function toggleNotePin(id: number, pinned: boolean): Note {
   notesCache = null;
   const nowIso = new Date().toISOString();
   db.prepare(`UPDATE notes SET pinned = ?, updated_at = ? WHERE id = ?`).run(pinned ? 1 : 0, nowIso, id);
-  const row = db.prepare(`SELECT cloud_id FROM notes WHERE id = ?`).get(id) as { cloud_id?: string } | undefined;
-  if (row?.cloud_id) {
-    enqueueSync('notes', row.cloud_id, 'upsert', {
-      id: row.cloud_id,
-      pinned: pinned ? 1 : 0,
-      updated_at: nowIso,
-    });
-  }
-  const updated = db.prepare(`SELECT id, title, body, created_at, updated_at, pinned FROM notes WHERE id = ?`).get(id) as {
-    id: number; title: string; body: string; created_at: string; updated_at: string; pinned: number;
-  };
-  return {
-    id: updated.id,
-    title: updated.title,
-    body: updated.body,
-    createdAt: updated.created_at,
-    updatedAt: updated.updated_at,
-    pinned: Boolean(updated.pinned),
-  };
+  const updated = getNoteRowById(id);
+  if (!updated) throw new Error('Note not found.');
+  pushNoteUpsert(updated);
+  return noteRowToNote(updated);
+}
+
+export function setNoteLock(id: number, code: string): Note {
+  notesCache = null;
+  const nowIso = new Date().toISOString();
+  const salt = crypto.randomBytes(16).toString('base64');
+  const hash = hashNoteLockCode(code, salt);
+  db.prepare(`
+    UPDATE notes
+    SET lock_code_hash = ?, lock_code_salt = ?, updated_at = ?
+    WHERE id = ? AND deleted_at IS NULL
+  `).run(hash, salt, nowIso, id);
+  const updated = getNoteRowById(id);
+  if (!updated) throw new Error('Note not found.');
+  pushNoteUpsert(updated);
+  return noteRowToNote(updated);
+}
+
+export function unlockNote(id: number, code: string): Note | null {
+  const row = getNoteRowById(id);
+  if (!row) throw new Error('Note not found.');
+  if (!row.lock_code_hash || !row.lock_code_salt) return noteRowToNote(row);
+  return verifyNoteLockCode(code, row.lock_code_salt, row.lock_code_hash) ? noteRowToNote(row) : null;
+}
+
+export function removeNoteLock(id: number): Note {
+  notesCache = null;
+  const nowIso = new Date().toISOString();
+  db.prepare(`
+    UPDATE notes
+    SET lock_code_hash = NULL, lock_code_salt = NULL, updated_at = ?
+    WHERE id = ? AND deleted_at IS NULL
+  `).run(nowIso, id);
+  const updated = getNoteRowById(id);
+  if (!updated) throw new Error('Note not found.');
+  pushNoteUpsert(updated);
+  return noteRowToNote(updated);
 }
 
 export function deleteNote(id: number): void {

@@ -43,6 +43,10 @@ contextBridge.exposeInMainWorld('api', {
   saveNote: (note: NoteInput) => ipcRenderer.invoke('save-note', note),
   deleteNote: (id: number) => ipcRenderer.invoke('delete-note', id),
   toggleNotePin: (id: number, pinned: boolean) => ipcRenderer.invoke('toggle-note-pin', id, pinned),
+  lockNote: (id: number, code: string) => ipcRenderer.invoke('lock-note', id, code),
+  unlockNote: (id: number, code: string) => ipcRenderer.invoke('unlock-note', id, code),
+  relockNote: (id: number) => ipcRenderer.invoke('relock-note', id),
+  removeNoteLock: (id: number) => ipcRenderer.invoke('remove-note-lock', id),
   openStickyNoteWindow: (noteId?: number, options?: { x?: number; y?: number }) =>
     ipcRenderer.invoke('open-sticky-note-window', noteId, options),
   createNewStickyNoteWindow: (
@@ -114,6 +118,12 @@ contextBridge.exposeInMainWorld('api', {
 
   windowMinimize: () => ipcRenderer.send('window-minimize'),
   windowToggleMaximize: () => ipcRenderer.send('window-toggle-maximize'),
+  windowIsMaximized: () => ipcRenderer.invoke('window-is-maximized'),
+  onWindowMaximizedState: (cb: (maximized: boolean) => void) => {
+    const fn = (_: unknown, maximized: boolean) => cb(maximized);
+    ipcRenderer.on('window-maximized-state', fn);
+    return () => ipcRenderer.removeListener('window-maximized-state', fn);
+  },
   windowClose: () => ipcRenderer.send('window-close'),
   closeCurrentWindow: () => ipcRenderer.send('close-current-window'),
   forceCloseCurrentWindow: () => ipcRenderer.send('force-close-current-window'),
@@ -123,6 +133,16 @@ contextBridge.exposeInMainWorld('api', {
     const fn = () => cb();
     ipcRenderer.on('notes-updated', fn);
     return () => ipcRenderer.removeListener('notes-updated', fn);
+  },
+  onSyncedDataUpdated: (cb: (payload: { tables: string[] }) => void) => {
+    const fn = (_: unknown, payload: { tables: string[] }) => cb(payload);
+    ipcRenderer.on('synced-data-updated', fn);
+    return () => ipcRenderer.removeListener('synced-data-updated', fn);
+  },
+  onLocalDataCleared: (cb: () => void) => {
+    const fn = () => cb();
+    ipcRenderer.on('local-data-cleared', fn);
+    return () => ipcRenderer.removeListener('local-data-cleared', fn);
   },
   onOpenNoteInSticky: (cb: (note: Note) => void) => {
     const fn = (_: unknown, note: Note) => cb(note);

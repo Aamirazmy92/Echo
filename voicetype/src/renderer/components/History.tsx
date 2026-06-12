@@ -74,6 +74,16 @@ export default function HistoryView() {
 
   useEffect(() => {
     void load();
+    const offSynced = window.api.onSyncedDataUpdated?.(({ tables }) => {
+      if (tables.includes('dictionary')) void load();
+    });
+    const offCleared = window.api.onLocalDataCleared?.(() => {
+      void load();
+    });
+    return () => {
+      if (typeof offSynced === 'function') offSynced();
+      if (typeof offCleared === 'function') offCleared();
+    };
   }, []);
 
   useEffect(() => {

@@ -58,7 +58,7 @@ export function createTray(mainWindow: BrowserWindow): Tray {
 
 function buildMinimalTrayMenu() {
   return Menu.buildFromTemplate([
-    { label: 'Echo v1.0', enabled: false },
+    { label: `Echo v${app.getVersion()}`, enabled: false },
     { type: 'separator' },
     { label: 'Open Dashboard', click: () => showTab('dashboard') },
     { label: 'Open Style', click: () => showTab('style') },
@@ -200,7 +200,7 @@ async function updateTrayMenu() {
   ];
 
   const ctxMenu = Menu.buildFromTemplate([
-    { label: 'Echo v1.0', enabled: false },
+    { label: `Echo v${app.getVersion()}`, enabled: false },
     { type: 'separator' },
     { label: 'Microphone', submenu: microphoneItems },
     { label: 'Languages', submenu: languageItems },

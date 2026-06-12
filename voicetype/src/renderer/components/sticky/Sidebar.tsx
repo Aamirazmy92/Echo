@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { motion } from 'framer-motion';
 import {
   MoreHorizontal,
+  LockKeyhole,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -9,6 +10,7 @@ import {
   Plus,
   Search,
   Trash2,
+  UnlockKeyhole,
 } from 'lucide-react';
 import type { Note } from '../../../shared/types';
 import { noteHtmlToPlainText } from '../../lib/noteRichText';
@@ -24,6 +26,10 @@ type SidebarProps = {
   onAddNewTab: () => void;
   onRenameNote: (note: Note) => void;
   onTogglePin: (id: number) => void;
+  onLockNote: (note: Note) => void;
+  onUnlockNote: (note: Note) => void;
+  onRelockNote: (note: Note) => void;
+  onRemoveNoteLock: (note: Note) => void;
   onRequestDelete: (id: number) => void;
   renamingNoteId: number | null;
   renamingNoteTitle: string;
@@ -47,6 +53,10 @@ export default function Sidebar({
   onAddNewTab,
   onRenameNote,
   onTogglePin,
+  onLockNote,
+  onUnlockNote,
+  onRelockNote,
+  onRemoveNoteLock,
   onRequestDelete,
   renamingNoteId,
   renamingNoteTitle,
@@ -150,7 +160,8 @@ export default function Sidebar({
           filteredNotes.map((note) => {
             const isOpen = openNoteIds.has(note.id);
             const isPinned = note.pinned;
-            const preview = noteHtmlToPlainText(note.body).slice(0, 90);
+            const isLockedClosed = note.locked && !note.lockUnlocked;
+            const preview = isLockedClosed ? 'Locked' : noteHtmlToPlainText(note.body).slice(0, 90);
             return (
               <div
                 key={note.id}
@@ -177,6 +188,7 @@ export default function Sidebar({
                   >
                     <span className="sticky-note-row-title">
                       {isPinned && <Pin size={9} className="sticky-note-row-pin" />}
+                      {note.locked && <LockKeyhole size={9} className="sticky-note-row-lock" />}
                       <span className="truncate">{note.title || 'Untitled'}</span>
                     </span>
                     <span className="sticky-note-row-preview">{preview || 'No content'}</span>
@@ -220,6 +232,54 @@ export default function Sidebar({
                       <Pin size={12} className={isPinned ? 'sticky-note-row-pin' : ''} />
                       {isPinned ? 'Unpin' : 'Pin'}
                     </button>
+                    {!note.locked && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenNoteMenuId(null);
+                          onLockNote(note);
+                        }}
+                      >
+                        <LockKeyhole size={12} />
+                        Lock
+                      </button>
+                    )}
+                    {note.locked && !note.lockUnlocked && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenNoteMenuId(null);
+                          onUnlockNote(note);
+                        }}
+                      >
+                        <UnlockKeyhole size={12} />
+                        Unlock
+                      </button>
+                    )}
+                    {note.locked && note.lockUnlocked && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenNoteMenuId(null);
+                            onRelockNote(note);
+                          }}
+                        >
+                          <LockKeyhole size={12} />
+                          Lock now
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenNoteMenuId(null);
+                            onRemoveNoteLock(note);
+                          }}
+                        >
+                          <UnlockKeyhole size={12} />
+                          Remove lock
+                        </button>
+                      </>
+                    )}
                     <button
                       type="button"
                       className="is-danger"

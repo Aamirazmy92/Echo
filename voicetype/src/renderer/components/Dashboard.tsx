@@ -23,7 +23,7 @@ function Tooltip({ children, content }: { children: ReactNode; content: string }
   return (
     <div className="group/tooltip relative inline-block">
       {children}
-      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium whitespace-nowrap text-background opacity-0 shadow-md transition-opacity duration-100 group-hover/tooltip:opacity-100" style={{ fontFamily: 'var(--font-body)' }}>
+      <div role="tooltip" className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium whitespace-nowrap text-background opacity-0 shadow-md transition-opacity duration-100 group-hover/tooltip:opacity-100 group-hover/tooltip:delay-300" style={{ fontFamily: 'var(--font-body)' }}>
         {content}
       </div>
     </div>
@@ -485,7 +485,7 @@ export default function Dashboard({ settings: parentSettings }: DashboardProps) 
           window), while content keeps its 28px gutter. */}
       <div
         ref={scrollContainerRef}
-        className="-mx-8 flex-1 min-h-0 overflow-y-auto px-8 pb-8"
+        className="scroll-hover -mx-8 flex-1 min-h-0 overflow-y-auto px-8 pb-8"
         style={{ scrollbarGutter: 'stable' }}
       >
       {/* History List */}

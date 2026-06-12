@@ -71,6 +71,7 @@ export default function AccountView({
 }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [sync, setSync] = useState<SyncStatusPayload | null>(null);
+  const [planTier, setPlanTier] = useState<'anonymous' | 'free' | 'pro' | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [forcing, setForcing] = useState(false);
   const [signOutModalOpen, setSignOutModalOpen] = useState(false);
@@ -95,10 +96,18 @@ export default function AccountView({
     })();
     const offAuth = window.api.onAuthState((next) => setSession(next));
     const offSync = window.api.onSyncStatus((next) => setSync(next));
+    void window.api
+      .entitlementsGet()
+      .then((ent) => {
+        if (!cancelled) setPlanTier(ent.tier);
+      })
+      .catch(() => undefined);
+    const offEnt = window.api.onEntitlementsChanged((ent) => setPlanTier(ent.tier));
     return () => {
       cancelled = true;
       offAuth();
       offSync();
+      offEnt();
     };
   }, []);
 
@@ -265,20 +274,21 @@ export default function AccountView({
     .toUpperCase();
 
   const displayName = (session.displayName || `${firstName} ${lastName}`.trim() || session.email.split('@')[0]).trim();
-  const planLabel = cloudVisible ? 'Pro plan' : 'Basic plan';
+  // Derive the badge from real entitlements, not UI visibility flags.
+  const planLabel = planTier === 'pro' ? 'Pro plan' : 'Basic plan';
 
   return (
-    <div className="flex min-h-full flex-col gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
       {/* Hero card — warm sand surface that hosts the avatar, identity
           summary, and the prominent Upgrade affordance. */}
-      <section className="flex items-center justify-between gap-4 rounded-2xl bg-secondary px-5 py-4">
-        <div className="flex min-w-0 items-center gap-4">
+      <section className="flex h-[82px] shrink-0 items-center justify-between gap-4 rounded-xl border border-border bg-secondary px-5">
+        <div className="flex min-w-0 items-center gap-3.5">
           <div className="relative">
             <button
               type="button"
               onClick={() => profileInputRef.current?.click()}
               disabled={savingPicture}
-              className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[hsl(220,14%,14%)] text-base font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
+              className="relative flex h-[52px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-full bg-[hsl(220,14%,14%)] text-base font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
               aria-label="Change profile picture"
             >
               {session.profilePictureDataUrl ? (
@@ -321,7 +331,7 @@ export default function AccountView({
             ) : null}
           </div>
           <div className="min-w-0">
-            <div className="truncate text-[18px] font-semibold text-foreground">{displayName}</div>
+            <div className="truncate text-[17px] font-semibold leading-tight text-foreground">{displayName}</div>
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
               <span className="truncate">{session.email}</span>
               <span aria-hidden className="text-muted-foreground/60">·</span>
@@ -343,8 +353,8 @@ export default function AccountView({
 
       {/* Profile card — labeled form fields with proper FIRST/LAST grid
           and a verified-email row. */}
-      <section className="rounded-2xl border border-border bg-card p-5 shadow-[0_1px_4px_rgba(31,27,22,0.05)]">
-        <div className="mb-4">
+      <section className="settings-modal-card shrink-0 p-4">
+        <div className="mb-3">
           <h2 className="text-[16px] font-semibold text-foreground">Profile</h2>
           <p className="mt-0.5 text-[13px] text-muted-foreground">
             How Echo greets you and signs your shortcuts.
@@ -366,7 +376,7 @@ export default function AccountView({
               }}
               placeholder="First name"
               disabled={savingName}
-              className="mt-1.5 h-10 w-full rounded-lg border border-border bg-card px-3 text-[14px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground disabled:opacity-60"
+              className="mt-1.5 h-9 w-full rounded-lg border border-border bg-card px-3 text-[14px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground disabled:opacity-60"
             />
           </label>
           <label className="block">
@@ -383,12 +393,12 @@ export default function AccountView({
               }}
               placeholder="Last name"
               disabled={savingName}
-              className="mt-1.5 h-10 w-full rounded-lg border border-border bg-card px-3 text-[14px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground disabled:opacity-60"
+              className="mt-1.5 h-9 w-full rounded-lg border border-border bg-card px-3 text-[14px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground disabled:opacity-60"
             />
           </label>
         </div>
 
-        <div className="mt-4">
+        <div className="mt-3">
           <label className="block">
             <span className="block text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
               Email
@@ -398,7 +408,7 @@ export default function AccountView({
                 type="email"
                 value={session.email}
                 readOnly
-                className="h-10 w-full cursor-default rounded-lg border border-border bg-card px-3 pr-[90px] text-[14px] text-foreground outline-none"
+                className="h-9 w-full cursor-default rounded-lg border border-border bg-card px-3 pr-[90px] text-[14px] text-foreground outline-none"
               />
               <span className="absolute right-2 top-1/2 inline-flex -translate-y-1/2 items-center gap-1 rounded-full bg-[hsl(95_21%_45%/0.14)] px-2 py-0.5 text-[11px] font-medium text-[hsl(95_30%_28%)]">
                 <Check size={11} strokeWidth={3} />
@@ -406,7 +416,7 @@ export default function AccountView({
               </span>
             </div>
           </label>
-          <p className="mt-1.5 text-[12px] text-muted-foreground">
+          <p className="mt-1 text-[12px] text-muted-foreground">
             Used for sign-in, receipts, and account recovery.
           </p>
         </div>
@@ -422,7 +432,7 @@ export default function AccountView({
           </p>
         ) : null}
 
-        <div className="mt-5 flex items-center justify-end gap-3">
+        <div className="mt-4 flex items-center justify-end gap-3">
           <button
             type="button"
             onClick={handleDiscard}
@@ -459,7 +469,7 @@ export default function AccountView({
           `bg-foreground` / `bg-destructive` utilities lose to `.echo-btn`'s
           base colors due to stylesheet order, which is why they looked
           washed-out before. */}
-      <div className="mt-auto flex items-center gap-2 pt-1">
+      <div className="mt-auto flex shrink-0 items-center gap-2 pt-1">
         <button
           type="button"
           onClick={() => setSignOutModalOpen(true)}
@@ -556,12 +566,12 @@ function SyncCard({
   })();
 
   return (
-    <section className="rounded-xl border border-border bg-popover p-3 shadow-[0_1px_4px_rgba(31,27,22,0.05)]">
-      <h2 className="mb-2 text-[15px] font-semibold text-foreground">Cloud sync</h2>
+    <section className="settings-modal-card shrink-0 p-3">
+      <h2 className="mb-2 text-[15px] font-semibold leading-tight text-foreground">Cloud sync</h2>
       <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
           <span aria-hidden>{icon}</span>
-          <span className="text-[13px] text-[hsl(220,14%,18%)]">{label}</span>
+          <span className="truncate text-[13px] text-[hsl(220,14%,18%)]">{label}</span>
         </div>
         <button
           type="button"

@@ -99,12 +99,14 @@ create table if not exists public.dictionary (
   shared boolean not null default false,
   client_created_at timestamptz not null,
   updated_at timestamptz default now(),
-  deleted_at timestamptz,
-  unique (user_id, phrase, deleted_at)
+  deleted_at timestamptz
 );
 
 create index if not exists dictionary_user_id_idx        on public.dictionary (user_id);
 create index if not exists dictionary_user_updated_at_idx on public.dictionary (user_id, updated_at desc);
+create unique index if not exists dictionary_user_active_phrase_idx
+  on public.dictionary (user_id, phrase)
+  where deleted_at is null;
 drop trigger if exists dictionary_set_updated_at on public.dictionary;
 create trigger dictionary_set_updated_at before update on public.dictionary
   for each row execute function public.set_updated_at();
@@ -119,12 +121,14 @@ create table if not exists public.snippets (
   shared boolean not null default false,
   client_created_at timestamptz not null,
   updated_at timestamptz default now(),
-  deleted_at timestamptz,
-  unique (user_id, trigger, deleted_at)
+  deleted_at timestamptz
 );
 
 create index if not exists snippets_user_id_idx        on public.snippets (user_id);
 create index if not exists snippets_user_updated_at_idx on public.snippets (user_id, updated_at desc);
+create unique index if not exists snippets_user_active_trigger_idx
+  on public.snippets (user_id, trigger)
+  where deleted_at is null;
 drop trigger if exists snippets_set_updated_at on public.snippets;
 create trigger snippets_set_updated_at before update on public.snippets
   for each row execute function public.set_updated_at();
@@ -136,6 +140,8 @@ create table if not exists public.notes (
   title text not null default '',
   body text not null default '',
   pinned boolean not null default false,
+  lock_code_hash text,
+  lock_code_salt text,
   client_created_at timestamptz not null,
   updated_at timestamptz default now(),
   deleted_at timestamptz
@@ -143,6 +149,8 @@ create table if not exists public.notes (
 
 -- Backfill for projects created before `pinned` existed.
 alter table public.notes add column if not exists pinned boolean not null default false;
+alter table public.notes add column if not exists lock_code_hash text;
+alter table public.notes add column if not exists lock_code_salt text;
 
 create index if not exists notes_user_id_idx         on public.notes (user_id);
 create index if not exists notes_user_updated_at_idx on public.notes (user_id, updated_at desc);

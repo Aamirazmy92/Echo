@@ -43,11 +43,6 @@ import {
 } from '../lib/modalMotion';
 
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
-const SUPPORTED_MOUSE_BUTTONS: Record<number, { accelerator: string; label: string }> = {
-  1: { accelerator: 'MouseMiddle', label: 'Middle Mouse' },
-  3: { accelerator: 'Mouse4', label: 'Mouse 4' },
-  4: { accelerator: 'Mouse5', label: 'Mouse 5' },
-};
 type HotkeyTarget = 'toggleHotkey' | 'pushToTalkHotkey' | 'cancelHotkey';
 type ActiveHotkeyCapture = {
   field: HotkeyTarget;
@@ -415,38 +410,6 @@ function buildComboHotkeyFromEvent(event: KeyboardEvent, target: HotkeyTarget) {
   };
 }
 
-function buildMouseHotkeyFromEvent(event: MouseEvent) {
-  const mouseButton = SUPPORTED_MOUSE_BUTTONS[event.button];
-  if (!mouseButton) {
-    return { valid: false as const, reason: 'Use Middle Mouse, Mouse 4, or Mouse 5.' };
-  }
-
-  const parts: string[] = [];
-  const labels: string[] = [];
-
-  if (event.ctrlKey || event.metaKey) {
-    parts.push('CommandOrControl');
-    labels.push('Ctrl');
-  }
-  if (event.altKey) {
-    parts.push('Alt');
-    labels.push('Alt');
-  }
-  if (event.shiftKey) {
-    parts.push('Shift');
-    labels.push('Shift');
-  }
-
-  parts.push(mouseButton.accelerator);
-  labels.push(mouseButton.label);
-
-  return {
-    valid: true as const,
-    accelerator: parts.join('+'),
-    label: labels.join(' + '),
-  };
-}
-
 function FlagIcon({
   language,
   label,
@@ -676,7 +639,7 @@ export default memo(function SettingsView({
       }
     };
 
-    const onMouseDown = async (event: MouseEvent) => {
+    const onMouseDown = (event: MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
 
@@ -685,15 +648,11 @@ export default memo(function SettingsView({
         return;
       }
 
-      const result = buildMouseHotkeyFromEvent(event);
-      if (!result.valid) {
-        const reason = result.reason ?? 'Invalid mouse button.';
-        setHotkeyMessages((current) => ({ ...current, [activeCapture.field]: reason }));
-        toast.error(reason);
-        return;
-      }
-
-      await commitHotkey(result.accelerator, result.label);
+      // The global hotkey watcher is a low-level *keyboard* hook — mouse
+      // bindings would save fine but silently never fire, so reject them.
+      const reason = 'Mouse buttons aren\u2019t supported \u2014 use a keyboard shortcut.';
+      setHotkeyMessages((current) => ({ ...current, [activeCapture.field]: reason }));
+      toast.error(reason);
     };
 
     window.addEventListener('keydown', onKeyDown, true);
@@ -918,6 +877,10 @@ export default memo(function SettingsView({
     },
     [microphoneOptions, settings?.microphoneId, settings?.microphoneLabel]
   );
+  // A specific device was chosen but no longer enumerates (unplugged, etc.).
+  const selectedMicrophoneUnavailable =
+    Boolean(settings?.microphoneId) &&
+    !microphoneOptions.some((option) => option.value === settings?.microphoneId);
   const languageSelection = useMemo(
     () => getEffectiveLanguageSelection(settings ?? {}),
     [settings?.language, settings?.selectedLanguages, settings?.autoDetectLanguage]
@@ -1113,7 +1076,14 @@ export default memo(function SettingsView({
               <div className="min-w-0">
                 <div className="text-[15px] font-semibold text-foreground">Microphone</div>
                 <div className="mt-0.5 truncate text-[13px] text-muted-foreground">
-                  {selectedMicrophone.label}. <span style={{ color: 'var(--moss)' }}>Calibrated.</span>
+                  {selectedMicrophone.label}.{' '}
+                  {selectedMicrophoneUnavailable ? (
+                    <span style={{ color: 'hsl(var(--destructive))' }}>
+                      Unavailable — reconnect it or switch devices.
+                    </span>
+                  ) : (
+                    <span style={{ color: 'var(--moss)' }}>Connected.</span>
+                  )}
                 </div>
               </div>
               <button onMouseDown={(event) => event.preventDefault()} onClick={() => setIsMicrophoneModalOpen(true)} className="echo-btn settings-option-btn shrink-0">Change</button>
@@ -1284,8 +1254,8 @@ export default memo(function SettingsView({
             </button>
           </div>
 
-          <div className="h-full overflow-y-auto px-8 pt-6 pb-6">
-            <div className="mx-auto min-h-full max-w-[620px]">
+          <div className={`h-full px-8 pt-5 pb-6 ${activeCategory === 'Account' ? 'overflow-hidden' : 'scroll-hover overflow-y-auto'}`}>
+            <div className={`mx-auto max-w-[620px] ${activeCategory === 'Account' ? 'h-full' : 'min-h-full'}`}>
               {filteredSidebarSections.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-border bg-popover/70 px-5 py-10 text-center">
                   <div className="text-[15px] font-semibold text-foreground">No matching settings</div>
@@ -1296,7 +1266,7 @@ export default memo(function SettingsView({
               ) : activeCategory === 'General' && hasGeneralMatches ? (
                 <SettingsOptionsCard rows={generalOptionRows} />
               ) : activeCategory === 'Account' && hasAccountMatches ? (
-                <div className="flex min-h-full flex-col">
+                <div className="flex h-full min-h-0 flex-col">
                   <AccountView
                     cloudVisible={entitlements?.tier === 'pro'}
                     onUpgradeClick={() => setActiveCategory('Plans')}

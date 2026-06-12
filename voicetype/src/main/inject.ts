@@ -1,4 +1,5 @@
 import { ChildProcessByStdio, execFile, spawn } from 'child_process';
+import { clipboard } from 'electron';
 import { Readable, Writable } from 'stream';
 const SEND_INPUT_HELPER_TIMEOUT_MS = 5_000;
 
@@ -62,8 +63,8 @@ public class SendInputTyper {
 
     private const uint INPUT_KEYBOARD = 1;
     private const uint KEYEVENTF_KEYUP = 0x0002;
-    private const uint KEYEVENTF_UNICODE = 0x0004;
     private const ushort VK_CONTROL = 0x11;
+    private const ushort VK_SHIFT = 0x10;
     private const ushort VK_V = 0x56;
 
     // Resolve the INPUT struct size at runtime. A hard-coded value (e.g. 0x30)
@@ -71,29 +72,6 @@ public class SendInputTyper {
     // 28 on x86). When cbSize is wrong, SendInput silently returns 0 and no
     // keystroke is delivered.
     private static readonly int INPUT_SIZE = Marshal.SizeOf(typeof(INPUT));
-
-    public static int TypeText(string text) {
-        if (string.IsNullOrEmpty(text)) return 0;
-
-        // Build one INPUT[] containing key-down + key-up for every character
-        // and dispatch with a single SendInput call. This is effectively
-        // instantaneous (one syscall) and avoids any per-character delay.
-        var inputs = new INPUT[text.Length * 2];
-        int idx = 0;
-        foreach (char ch in text) {
-            inputs[idx].type = INPUT_KEYBOARD;
-            inputs[idx].U.ki.wScan = (ushort)ch;
-            inputs[idx].U.ki.dwFlags = KEYEVENTF_UNICODE;
-            idx++;
-
-            inputs[idx].type = INPUT_KEYBOARD;
-            inputs[idx].U.ki.wScan = (ushort)ch;
-            inputs[idx].U.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
-            idx++;
-        }
-
-        return (int)SendInput((uint)inputs.Length, inputs, INPUT_SIZE);
-    }
 
     // Send a single Ctrl+V chord so the target app sees one WM_PASTE and
     // renders the entire clipboard payload atomically. This avoids the
@@ -115,6 +93,26 @@ public class SendInputTyper {
         inputs[3].U.ki.dwFlags = KEYEVENTF_KEYUP;
         return (int)SendInput((uint)inputs.Length, inputs, INPUT_SIZE);
     }
+
+    public static int PressCtrlShiftV() {
+        var inputs = new INPUT[6];
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].U.ki.wVk = VK_CONTROL;
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].U.ki.wVk = VK_SHIFT;
+        inputs[2].type = INPUT_KEYBOARD;
+        inputs[2].U.ki.wVk = VK_V;
+        inputs[3].type = INPUT_KEYBOARD;
+        inputs[3].U.ki.wVk = VK_V;
+        inputs[3].U.ki.dwFlags = KEYEVENTF_KEYUP;
+        inputs[4].type = INPUT_KEYBOARD;
+        inputs[4].U.ki.wVk = VK_SHIFT;
+        inputs[4].U.ki.dwFlags = KEYEVENTF_KEYUP;
+        inputs[5].type = INPUT_KEYBOARD;
+        inputs[5].U.ki.wVk = VK_CONTROL;
+        inputs[5].U.ki.dwFlags = KEYEVENTF_KEYUP;
+        return (int)SendInput((uint)inputs.Length, inputs, INPUT_SIZE);
+    }
 }
 "@ -Language CSharp
 
@@ -122,16 +120,12 @@ public class SendInputTyper {
 [Console]::Out.Flush()
 
 while (($line = [Console]::In.ReadLine()) -ne $null) {
-  if ($line.StartsWith('type:')) {
-    $encoded = $line.Substring(5)
+  if ($line -eq 'paste') {
     try {
-      $bytes = [System.Convert]::FromBase64String($encoded)
-      $text = [System.Text.Encoding]::UTF8.GetString($bytes)
-      $sent = [SendInputTyper]::TypeText($text)
-      $expected = $text.Length * 2
-      if ($sent -lt $expected) {
+      $sent = [SendInputTyper]::PressCtrlV()
+      if ($sent -lt 4) {
         $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-        [Console]::Out.WriteLine("error:SendInput accepted $sent of $expected events (lastError=$err)")
+        [Console]::Out.WriteLine("error:SendInput accepted $sent of 4 events (lastError=$err)")
       } else {
         [Console]::Out.WriteLine('ok')
       }
@@ -140,12 +134,12 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
       [Console]::Out.WriteLine("error:$($_.Exception.Message)")
       [Console]::Out.Flush()
     }
-  } elseif ($line -eq 'paste') {
+  } elseif ($line -eq 'paste-shift') {
     try {
-      $sent = [SendInputTyper]::PressCtrlV()
-      if ($sent -lt 4) {
+      $sent = [SendInputTyper]::PressCtrlShiftV()
+      if ($sent -lt 6) {
         $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-        [Console]::Out.WriteLine("error:SendInput accepted $sent of 4 events (lastError=$err)")
+        [Console]::Out.WriteLine("error:SendInput accepted $sent of 6 events (lastError=$err)")
       } else {
         [Console]::Out.WriteLine('ok')
       }
@@ -264,16 +258,16 @@ function _isSendInputHelperReady(): boolean {
 }
 
 // Process names (lower-cased, .exe stripped) where synthetic Ctrl+V is not
-// reliably a paste shortcut. Two cases:
-//   1. Standalone terminals (conhost, WindowsTerminal, etc.) — Ctrl+V is
-//      forwarded to the foreground TUI as a literal ^V control character
-//      instead of being intercepted as paste.
-//   2. Electron-based IDEs whose integrated terminal panel rebinds paste to
-//      Ctrl+Shift+V (Cursor, VS Code, Windsurf, VSCodium) — when that panel
-//      has focus, Ctrl+V also reaches the shell as ^V.
-// For both, we type characters directly via KEYEVENTF_UNICODE so each char
-// becomes a WM_CHAR the terminal converts to stdin input. Direct typing also
-// works in these IDEs' editor surfaces, so over-matching is safe.
+// reliably a paste shortcut. Keep this limited to actual terminal hosts.
+//
+// IDEs such as VS Code, Cursor, Windsurf, and VSCodium must *not* be listed
+// here. The foreground-app detector only captures the process name, not the
+// focused control inside the window, so treating the whole IDE as a terminal
+// forces editor text boxes through KEYEVENTF_UNICODE direct typing. That path
+// emits WM_CHAR messages and IDE editors process them incrementally, which is
+// the user-visible "dictation arrives in parts" failure. The clipboard paste
+// path sends one Ctrl+V and lets editor/input surfaces ingest the transcript
+// atomically.
 const TERMINAL_PROCESS_NAMES = new Set([
   // Standalone terminals
   'windowsterminal',
@@ -292,14 +286,6 @@ const TERMINAL_PROCESS_NAMES = new Set([
   'conemu64',
   'conemu',
   'cmder',
-  // Electron IDEs with integrated terminals that don't bind Ctrl+V to paste
-  'cursor',
-  'code',
-  'code - insiders',
-  'codium',
-  'vscodium',
-  'windsurf',
-  'trae',
 ]);
 
 function isTerminalApp(name: string | undefined | null): boolean {
@@ -308,62 +294,27 @@ function isTerminalApp(name: string | undefined | null): boolean {
   return TERMINAL_PROCESS_NAMES.has(normalized);
 }
 
-async function typeWithSendInput(text: string): Promise<void> {
-  await ensureSendInputHelper();
-
-  if (!sendInputHelper) {
-    throw new Error('SendInput helper is not available.');
-  }
-
-  // Fire-and-verify: hand the payload to the helper and return as soon as
-  // the stdin write is flushed. The helper's ack/error response is consumed
-  // asynchronously on the next tick so we never block the critical path on
-  // the pipe round-trip. Any SendInput failure still surfaces via
-  // console.warn through the waiter.
-  const encoded = Buffer.from(text, 'utf-8').toString('base64');
-  sendInputHelper.stdin.write(`type:${encoded}\n`);
-
-  waitForSendInputHelperLine('ok', SEND_INPUT_HELPER_TIMEOUT_MS).catch((error) => {
-    console.warn('[inject]', error?.message ?? error);
-  });
-}
-
 // Windows paste-based injection. Per-character SendInput caused receivers
-// (browsers, Electron apps, chat clients) to stall at newlines and other
-// characters that trigger layout/autocomplete work on every WM_CHAR, making
-// long dictations appear chunked. Dropping the transcript on the clipboard
-// and firing a single Ctrl+V chord makes the target app see one WM_PASTE
-// and render the full payload in a single frame.
-async function pasteWithSendInput(text: string): Promise<void> {
+// (browsers, Electron apps, IDEs, chat clients) to process dictations as
+// incremental WM_CHAR streams. Dropping the transcript on the clipboard and
+// firing one paste chord makes the target app ingest the payload atomically.
+async function pasteWithSendInput(text: string, chord: 'ctrl-v' | 'ctrl-shift-v' = 'ctrl-v'): Promise<void> {
   await ensureSendInputHelper();
 
   if (!sendInputHelper) {
     throw new Error('SendInput helper is not available.');
   }
 
-  const { clipboard } = await import('electron');
-  const previousClipboard = clipboard.readText();
+  // Keep the paste hot path synchronous and minimal. Reading/restoring the
+  // previous clipboard can block on large or locked clipboard payloads, and
+  // restoring too early can race editors that defer reading clipboard data.
   clipboard.writeText(text);
 
-  sendInputHelper.stdin.write('paste\n');
+  sendInputHelper.stdin.write(chord === 'ctrl-shift-v' ? 'paste-shift\n' : 'paste\n');
 
   waitForSendInputHelperLine('ok', SEND_INPUT_HELPER_TIMEOUT_MS).catch((error) => {
     console.warn('[inject]', error?.message ?? error);
   });
-
-  // Restore the previous clipboard contents after the target app has had
-  // time to consume the paste. 200ms is generous enough for every mainstream
-  // text surface we've tested (Chromium, Electron, Win32, WPF, Slack, VS
-  // Code). Too short and the paste races the target's clipboard read.
-  setTimeout(() => {
-    try {
-      clipboard.writeText(previousClipboard);
-    } catch {
-      // Clipboard occasionally fails if the user is interacting with it at
-      // the exact moment we write — ignore, the original content is already
-      // gone and there's nothing we can do to recover.
-    }
-  }, 200);
 }
 
 function pasteWithAppleScript(): Promise<void> {
@@ -384,21 +335,15 @@ function pasteWithAppleScript(): Promise<void> {
 
 export async function injectText(text: string, activeAppName?: string): Promise<void> {
   if (process.platform === 'win32') {
-    // Terminals don't treat synthetic Ctrl+V as paste — the keystroke is
-    // forwarded to the foreground TUI as a literal control character. Type
-    // each char as a Unicode WM_CHAR instead so dictation lands in shells
-    // and TUIs (Claude Code, vim, PowerShell prompt) like real typing.
-    if (isTerminalApp(activeAppName)) {
-      await typeWithSendInput(text);
-      return;
-    }
-    await pasteWithSendInput(text);
+    // Normal apps and IDE editors receive one Ctrl+V paste. Terminal hosts
+    // commonly reserve Ctrl+V for literal input, so use their paste chord
+    // instead of falling back to per-character typing.
+    await pasteWithSendInput(text, isTerminalApp(activeAppName) ? 'ctrl-shift-v' : 'ctrl-v');
     return;
   }
 
   if (process.platform === 'darwin') {
     // macOS: still uses clipboard + paste as fallback (no native SendInput available)
-    const { clipboard } = await import('electron');
     const oldText = clipboard.readText();
     clipboard.writeText(text);
     try {

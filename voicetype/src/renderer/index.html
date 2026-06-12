@@ -50,12 +50,12 @@
       body {
         overflow: hidden;
         font-family: "Figtree", "Aptos", "Segoe UI Variable Display", "Segoe UI Variable Text", "SF Pro Display", "Helvetica Neue", sans-serif;
-        background: hsl(220 17% 92%);
+        background: #EFECE3;
       }
 
       #root {
         height: 100%;
-        background: hsl(220 17% 92%);
+        background: #EFECE3;
       }
 
       #splash {
@@ -65,9 +65,11 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: hsl(220 17% 92%);
-        transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-                    visibility 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0) 42%),
+          #EFECE3;
+        transition: opacity 0.26s cubic-bezier(0.22, 1, 0.36, 1),
+                    visibility 0.26s cubic-bezier(0.22, 1, 0.36, 1);
         opacity: 1;
         -webkit-font-smoothing: antialiased;
         -webkit-app-region: drag;
@@ -84,59 +86,73 @@
         display: flex;
         flex-direction: column;
         align-items: center;
+        width: 320px;
         padding: 0 32px;
-        animation: splash-fade 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
-      }
-
-      #splash .splash-mark {
-        display: none;
-        pointer-events: none;
-        animation: splash-text-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
-      }
-      #splash .splash-mark img {
-        display: block;
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        user-select: none;
-        -webkit-user-drag: none;
+        animation: splash-stage-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
       }
 
       #splash .splash-wordmark {
         position: relative;
-        font-family: "Figtree", "Aptos", "Segoe UI Variable Display", "Segoe UI Variable Text", "SF Pro Display", "Helvetica Neue", sans-serif;
-        font-weight: 700;
-        font-size: 36px;
+        font-family: "Source Serif 4", "Iowan Old Style", Georgia, serif;
+        font-weight: 500;
+        font-size: 42px;
         line-height: 1;
         letter-spacing: 0;
-        color: hsl(224 22% 11%);
-        animation: splash-text-in 0.9s 0.08s cubic-bezier(0.22, 1, 0.36, 1) both;
+        color: #1F1E1B;
+        animation:
+          splash-text-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both,
+          splash-wordmark-breathe 1.4s 0.42s ease-in-out infinite;
       }
 
       #splash .splash-tagline {
         position: relative;
-        margin-top: 10px;
-        font-size: 11px;
+        margin-top: 12px;
+        font-size: 13px;
         font-weight: 500;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-        color: hsl(30 8% 47%);
-        animation: splash-text-in 0.9s 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
+        line-height: 1.4;
+        letter-spacing: 0;
+        color: #6B6358;
+        animation: splash-text-in 0.42s 0.04s cubic-bezier(0.22, 1, 0.36, 1) both;
       }
 
-      /* Slim progress bar centered under the wordmark.
-         - Hairline track on the canvas so it doesn't compete with the logo.
-         - Fill uses the brand indigo with a faint moving sheen so it feels
-           alive while the bar fills. */
+      #splash .splash-meter {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        height: 22px;
+        margin-top: 22px;
+        animation: splash-text-in 0.42s 0.08s cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+
+      #splash .splash-meter span {
+        display: block;
+        width: 4px;
+        height: 22px;
+        border-radius: 999px;
+        background: #C96442;
+        opacity: 0.36;
+        transform-origin: center;
+        transform: scaleY(0.42);
+        animation: splash-meter 0.76s cubic-bezier(0.45, 0, 0.22, 1) infinite;
+      }
+
+      #splash .splash-meter span:nth-child(2) { animation-delay: 0.05s; }
+      #splash .splash-meter span:nth-child(3) { animation-delay: 0.1s; }
+      #splash .splash-meter span:nth-child(4) { animation-delay: 0.15s; }
+      #splash .splash-meter span:nth-child(5) { animation-delay: 0.2s; }
+
+      /* Slim progress bar centered under the loading copy. */
       #splash .splash-progress {
         position: relative;
-        margin-top: 36px;
-        width: 220px;
-        height: 3px;
+        margin-top: 16px;
+        width: 236px;
+        height: 4px;
         border-radius: 999px;
         background: rgba(31, 27, 22, 0.08);
         overflow: hidden;
-        animation: splash-text-in 0.9s 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.48) inset;
+        animation: splash-text-in 0.42s 0.12s cubic-bezier(0.22, 1, 0.36, 1) both;
       }
 
       #splash .splash-progress-fill {
@@ -147,11 +163,12 @@
         border-radius: 999px;
         background: linear-gradient(
           90deg,
-          hsl(32 42% 58%) 0%,
-          hsl(32 50% 70%) 100%
+          #B5563A 0%,
+          #C96442 58%,
+          #D97757 100%
         );
-        box-shadow: 0 0 12px rgba(201, 165, 122, 0.45);
-        animation: splash-progress 5.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        box-shadow: 0 0 16px rgba(201, 100, 66, 0.26);
+        animation: splash-progress 1.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
       }
 
       #splash .splash-progress-fill::after {
@@ -167,13 +184,13 @@
           rgba(255, 255, 255, 0.55) 50%,
           rgba(255, 255, 255, 0) 100%
         );
-        animation: splash-shine 1.6s linear infinite;
+        animation: splash-shine 0.78s linear infinite;
       }
 
       #splash.is-complete .splash-progress-fill {
         animation: none;
         width: 100%;
-        transition: width 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+        transition: width 0.16s cubic-bezier(0.22, 1, 0.36, 1);
       }
       #splash.is-complete .splash-progress-fill::after {
         animation: none;
@@ -182,32 +199,42 @@
 
       @keyframes splash-progress {
         0%   { width: 8%;  }
-        30%  { width: 42%; }
-        62%  { width: 68%; }
-        100% { width: 88%; }
+        26%  { width: 48%; }
+        68%  { width: 78%; }
+        100% { width: 92%; }
       }
       @keyframes splash-shine {
-        0%   { transform: translateX(-220px); }
-        100% { transform: translateX(220px);  }
+        0%   { transform: translateX(-236px); }
+        100% { transform: translateX(236px);  }
+      }
+      @keyframes splash-meter {
+        0%, 100% { opacity: 0.3; transform: scaleY(0.42); }
+        50%      { opacity: 0.86; transform: scaleY(1); }
       }
       @keyframes splash-text-in {
-        from { opacity: 0; transform: translateY(6px); }
+        from { opacity: 0; transform: translateY(5px); }
         to   { opacity: 1; transform: translateY(0);   }
       }
-      @keyframes splash-fade {
-        from { opacity: 0; }
-        to   { opacity: 1; }
+      @keyframes splash-stage-in {
+        from { opacity: 0; transform: translateY(5px) scale(0.985); }
+        to   { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      @keyframes splash-wordmark-breathe {
+        0%, 100% { opacity: 1; }
+        50%      { opacity: 0.86; }
       }
       @media (prefers-reduced-motion: reduce) {
         #splash .splash-stage,
-        #splash .splash-mark,
         #splash .splash-wordmark,
         #splash .splash-tagline,
+        #splash .splash-meter,
+        #splash .splash-meter span,
         #splash .splash-progress,
         #splash .splash-progress-fill,
         #splash .splash-progress-fill::after {
           animation: none !important;
         }
+        #splash .splash-meter span { opacity: 0.58; transform: scaleY(0.65); }
         #splash .splash-progress-fill { width: 82%; }
         #splash.is-complete .splash-progress-fill { width: 100%; }
       }
@@ -231,7 +258,14 @@
     <div id="splash" style="display:none" role="status" aria-label="Loading Echo">
       <div class="splash-stage">
         <div class="splash-wordmark">Echo</div>
-        <div class="splash-tagline">Voice dictation, instantly</div>
+        <div class="splash-tagline">Preparing Echo</div>
+        <div class="splash-meter" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
         <div class="splash-progress" aria-hidden="true">
           <div class="splash-progress-fill"></div>
         </div>

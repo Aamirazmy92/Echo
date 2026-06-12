@@ -1032,8 +1032,8 @@ function CycleToggle({
         Yearly
         <span
           style={{
-            background: 'rgba(110, 139, 92, 0.18)',
-            color: '#4F6940',
+            background: 'hsl(var(--success-soft, 95 21% 45% / 0.16))',
+            color: 'var(--moss-ink, #4F6940)',
             fontSize: 9.5,
             letterSpacing: '0.06em',
             textTransform: 'uppercase',

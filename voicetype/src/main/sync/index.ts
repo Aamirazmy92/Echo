@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron';
 import { getCurrentUserId, getSupabase, onAuthStateChange } from '../auth';
-import { getDb, isHistoryReady, clearLocalSyncedData } from '../history';
+import { getDb, isHistoryReady, clearLocalSyncedData, invalidateCachesForTable } from '../history';
 import { logError, logWarn } from '../logger';
 
 /*
@@ -43,6 +43,14 @@ type SyncLocalRow = Record<string, unknown> & {
   deleted_at?: unknown;
 };
 
+type SyncQueueRow = {
+  id: number;
+  table_name: string;
+  cloud_id: string;
+  op: 'upsert' | 'delete';
+  payload: string | null;
+};
+
 const TABLES: Record<TableMap['cloudTable'], TableMap> = {
   history: {
     cloudTable: 'history',
@@ -83,6 +91,8 @@ const TABLES: Record<TableMap['cloudTable'], TableMap> = {
       title: r.title,
       body: r.body,
       pinned: r.pinned ? 1 : 0,
+      lock_code_hash: r.lock_code_hash ?? null,
+      lock_code_salt: r.lock_code_salt ?? null,
       created_at: r.client_created_at,
       updated_at: r.updated_at,
       deleted_at: r.deleted_at,
@@ -120,6 +130,7 @@ let pullInFlight = false;
 let lastPushError: string | null = null;
 let lastPullError: string | null = null;
 let pendingLocalDataClear = false;
+let activeSyncedUserId: string | null = null;
 const disabledPushTables = new Set<string>();
 const disabledPullTables = new Set<string>();
 
@@ -183,6 +194,18 @@ function broadcastLocalDataCleared(): void {
   }
 }
 
+/** Tell every renderer that a sync pull changed local rows, so open views
+ *  (dashboard history, dictionary, shortcuts, notepad) can reload. */
+function broadcastSyncedDataUpdated(cloudTables: string[]): void {
+  if (cloudTables.length === 0) return;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    win.webContents.send('synced-data-updated', { tables: cloudTables });
+    // Sticky note windows already refresh on this dedicated channel.
+    if (cloudTables.includes('notes')) win.webContents.send('notes-updated');
+  }
+}
+
 function isMissingCloudRelationError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const detail = error as { code?: unknown; message?: unknown; details?: unknown };
@@ -213,6 +236,39 @@ function applyPendingLocalDataClearIfReady(): void {
   broadcastLocalDataCleared();
 }
 
+function clearLocalDataForUserSwitchIfReady(): void {
+  if (!isHistoryReady()) {
+    pendingLocalDataClear = true;
+    return;
+  }
+  clearLocalSyncedData();
+  pendingLocalDataClear = false;
+  lastPushError = null;
+  lastPullError = null;
+  lastSyncedAt = null;
+  broadcastLocalDataCleared();
+}
+
+function getNextQueueBatch(): SyncQueueRow[] {
+  const disabledTables = Array.from(disabledPushTables);
+  if (disabledTables.length === 0) {
+    return getDb()
+      .prepare('SELECT id, table_name, cloud_id, op, payload FROM sync_queue ORDER BY id ASC LIMIT 50')
+      .all() as SyncQueueRow[];
+  }
+
+  const placeholders = disabledTables.map(() => '?').join(',');
+  return getDb()
+    .prepare(
+      `SELECT id, table_name, cloud_id, op, payload
+       FROM sync_queue
+       WHERE table_name NOT IN (${placeholders})
+       ORDER BY id ASC
+       LIMIT 50`
+    )
+    .all(...disabledTables) as SyncQueueRow[];
+}
+
 async function drainQueue(): Promise<void> {
   if (pushInFlight) return;
   const supabase = getSupabase();
@@ -230,9 +286,7 @@ async function drainQueue(): Promise<void> {
   try {
     lastPushError = null;
     while (true) {
-      const batch = getDb()
-        .prepare('SELECT id, table_name, cloud_id, op, payload FROM sync_queue ORDER BY id ASC LIMIT 50')
-        .all() as Array<{ id: number; table_name: string; cloud_id: string; op: 'upsert' | 'delete'; payload: string | null }>;
+      const batch = getNextQueueBatch();
       if (batch.length === 0) break;
 
       // Group by table+op to minimise round trips. Keep deletes separate
@@ -241,7 +295,6 @@ async function drainQueue(): Promise<void> {
       const deletesByTable = new Map<string, Array<{ queueId: number; cloudId: string }>>();
 
       for (const row of batch) {
-        if (disabledPushTables.has(row.table_name)) continue;
         if (row.op === 'upsert' && row.payload) {
           const list = upsertsByTable.get(row.table_name) ?? [];
           const parsed = JSON.parse(row.payload) as Record<string, unknown>;
@@ -345,15 +398,16 @@ function setLastPulledAt(table: string, when: string): void {
     .run(table, when);
 }
 
-async function pullTable(map: TableMap): Promise<void> {
+async function pullTable(map: TableMap): Promise<boolean> {
   const supabase = getSupabase();
   const userId = getCurrentUserId();
-  if (!supabase || !userId) return;
-  if (disabledPullTables.has(map.cloudTable)) return;
+  if (!supabase || !userId) return false;
+  if (disabledPullTables.has(map.cloudTable)) return false;
 
   const since = getLastPulledAt(map.cloudTable);
   let page = 0;
   let maxUpdatedAt: string | null = since;
+  let appliedRows = 0;
 
   while (true) {
     const from = page * PULL_PAGE_SIZE;
@@ -371,13 +425,13 @@ async function pullTable(map: TableMap): Promise<void> {
     if (error) {
       if (isMissingCloudRelationError(error)) {
         disableMissingPullTable(map.cloudTable, error);
-        return;
+        return appliedRows > 0;
       }
       lastPullError = `pull ${map.cloudTable}: ${error.message}`;
       logWarn('sync', `pull from ${map.cloudTable} failed`, error);
-      return;
+      return appliedRows > 0;
     }
-    if (!data || data.length === 0) return;
+    if (!data || data.length === 0) break;
 
     const db = getDb();
 
@@ -401,6 +455,7 @@ async function pullTable(map: TableMap): Promise<void> {
           } else {
             db.prepare(`DELETE FROM ${map.localTable} WHERE cloud_id = ?`).run(local.cloud_id);
           }
+          appliedRows += 1;
           continue;
         }
         // Upsert by cloud_id.
@@ -411,8 +466,10 @@ async function pullTable(map: TableMap): Promise<void> {
           // Last-write-wins. Skip if local is newer.
           if (existing.updated_at && local.updated_at && existing.updated_at >= local.updated_at) continue;
           applyUpdate(map.localTable, existing.id, local);
+          appliedRows += 1;
         } else {
           applyInsert(map.localTable, local);
+          appliedRows += 1;
         }
       }
     });
@@ -421,10 +478,17 @@ async function pullTable(map: TableMap): Promise<void> {
     page += 1;
   }
 
+  if (appliedRows > 0) {
+    // The transaction wrote via getDb() directly — drop the module-level
+    // caches in history.ts so the next read sees the pulled rows.
+    invalidateCachesForTable(map.localTable);
+  }
+
   if (maxUpdatedAt && maxUpdatedAt !== since) {
     setLastPulledAt(map.cloudTable, maxUpdatedAt);
   }
   lastPullError = null;
+  return appliedRows > 0;
 }
 
 function applyInsert(table: string, row: SyncLocalRow): void {
@@ -474,8 +538,8 @@ function applyInsert(table: string, row: SyncLocalRow): void {
     });
   } else if (table === 'notes') {
     db.prepare(
-      `INSERT OR REPLACE INTO notes (title, body, created_at, updated_at, cloud_id, deleted_at, pinned)
-       VALUES (@title, @body, @created_at, @updated_at, @cloud_id, @deleted_at, @pinned)`
+      `INSERT OR REPLACE INTO notes (title, body, created_at, updated_at, cloud_id, deleted_at, pinned, lock_code_hash, lock_code_salt)
+       VALUES (@title, @body, @created_at, @updated_at, @cloud_id, @deleted_at, @pinned, @lock_code_hash, @lock_code_salt)`
     ).run({
       title: row.title ?? '',
       body: row.body ?? '',
@@ -484,6 +548,8 @@ function applyInsert(table: string, row: SyncLocalRow): void {
       cloud_id: row.cloud_id,
       deleted_at: row.deleted_at ?? null,
       pinned: row.pinned ?? 0,
+      lock_code_hash: row.lock_code_hash ?? null,
+      lock_code_salt: row.lock_code_salt ?? null,
     });
   }
 }
@@ -529,13 +595,15 @@ function applyUpdate(table: string, id: number, row: SyncLocalRow): void {
     );
   } else if (table === 'notes') {
     db.prepare(
-      `UPDATE notes SET title=?, body=?, updated_at=?, deleted_at=?, pinned=? WHERE id=?`
+      `UPDATE notes SET title=?, body=?, updated_at=?, deleted_at=?, pinned=?, lock_code_hash=?, lock_code_salt=? WHERE id=?`
     ).run(
       row.title ?? '',
       row.body ?? '',
       row.updated_at,
       row.deleted_at ?? null,
       row.pinned ?? 0,
+      row.lock_code_hash ?? null,
+      row.lock_code_salt ?? null,
       id
     );
   }
@@ -549,11 +617,13 @@ async function pullAll(): Promise<void> {
   broadcastStatus('syncing');
   try {
     lastPullError = null;
-    await pullTable(TABLES.history);
-    await pullTable(TABLES.snippets);
-    await pullTable(TABLES.dictionary);
-    await pullTable(TABLES.notes);
+    const changedTables: string[] = [];
+    if (await pullTable(TABLES.history)) changedTables.push('history');
+    if (await pullTable(TABLES.snippets)) changedTables.push('snippets');
+    if (await pullTable(TABLES.dictionary)) changedTables.push('dictionary');
+    if (await pullTable(TABLES.notes)) changedTables.push('notes');
     lastSyncedAt = new Date().toISOString();
+    broadcastSyncedDataUpdated(changedTables);
   } catch (err) {
     lastPullError = (err as Error).message;
     logError('sync', 'pullAll threw', err);
@@ -592,8 +662,16 @@ export function initSync(): void {
   // away (sign-out / token revoked) → stop and clear watermarks so the
   // next sign-in pulls everything fresh.
   onAuthStateChange((session) => {
-    if (session) startSync();
-    else {
+    if (session) {
+      const nextUserId = session.user?.id ?? null;
+      if (activeSyncedUserId && nextUserId && activeSyncedUserId !== nextUserId) {
+        stopSync();
+        clearLocalDataForUserSwitchIfReady();
+      }
+      activeSyncedUserId = nextUserId;
+      startSync();
+    } else {
+      activeSyncedUserId = null;
       stopSync();
       // Wipe local synced data on sign-out so the *next* user that
       // signs into this machine doesn't inherit the previous user's

@@ -2,6 +2,7 @@ node_modules/
 out/
 dist/
 .vite/
+.electron-cache/
 .vscode/
 app.log
 *.db

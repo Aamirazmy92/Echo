@@ -30,12 +30,11 @@ Useful scripts:
 
 | Command | What it does |
 | --- | --- |
-| `npm start` | Dev mode with auto-restart for main/preload edits. |
-| `npm run start:forge` | Plain Electron Forge dev (no auto-restart). |
+| `npm start` | Build the Vite bundles and launch Electron locally. |
 | `npm run typecheck` | TypeScript check, no emit. |
 | `npm run lint` | ESLint over `src/`. |
 | `npm test` | Run the Vitest unit suite. |
-| `npm run package` | Produce an unpacked Forge package for local inspection. |
+| `npm run package` | Produce an unpacked electron-builder package for local inspection. |
 | `npm run make` | Produce an NSIS installer plus `latest.yml` in `dist/`. |
 | `npm run publish` | Build + upload NSIS update assets to GitHub Releases. |
 | `node scripts/generate-icons.cjs` | Regenerate tray + app icons. |
@@ -121,7 +120,6 @@ src/
   shared/      Types, hotkey/language utilities — used by both sides.
 
 scripts/
-  dev-supervisor.cjs        Restarts Forge when main bundles change.
   verify-release-assets.cjs Pre-flight check for `make`/`publish`.
   generate-icons.cjs        Regenerates tray PNGs + icon.ico from
                             procedural drawing (no Sharp dependency).

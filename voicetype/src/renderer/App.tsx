@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, Suspense, lazy, startTransition } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
+  Copy,
   Minus,
   Square,
   X,
@@ -47,9 +48,26 @@ let historyViewImportPromise: Promise<typeof import('./components/History')> | n
 let snippetsViewImportPromise: Promise<typeof import('./components/Snippets')> | null = null;
 let styleViewImportPromise: Promise<typeof import('./components/Style')> | null = null;
 
+// Rebuilding while the app is open renames the hashed lazy chunks, so the
+// running renderer can never fetch the old file again. One reload picks up
+// the fresh index.html with the new chunk names. The timestamp guard stops
+// a reload loop if the failure has a different cause.
+const CHUNK_RELOAD_KEY = 'echo:chunk-reload-at';
+function recoverFromStaleChunk(error: unknown): never {
+  const lastReloadAt = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) ?? 0);
+  if (Date.now() - lastReloadAt > 30_000) {
+    sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()));
+    window.location.reload();
+  }
+  throw error;
+}
+
 function loadSettingsView() {
   if (!settingsViewImportPromise) {
-    settingsViewImportPromise = import('./components/Settings');
+    settingsViewImportPromise = import('./components/Settings').catch((error) => {
+      settingsViewImportPromise = null;
+      recoverFromStaleChunk(error);
+    });
   }
 
   return settingsViewImportPromise;
@@ -57,7 +75,10 @@ function loadSettingsView() {
 
 function loadHistoryView() {
   if (!historyViewImportPromise) {
-    historyViewImportPromise = import('./components/History');
+    historyViewImportPromise = import('./components/History').catch((error) => {
+      historyViewImportPromise = null;
+      recoverFromStaleChunk(error);
+    });
   }
 
   return historyViewImportPromise;
@@ -65,7 +86,10 @@ function loadHistoryView() {
 
 function loadSnippetsView() {
   if (!snippetsViewImportPromise) {
-    snippetsViewImportPromise = import('./components/Snippets');
+    snippetsViewImportPromise = import('./components/Snippets').catch((error) => {
+      snippetsViewImportPromise = null;
+      recoverFromStaleChunk(error);
+    });
   }
 
   return snippetsViewImportPromise;
@@ -73,7 +97,10 @@ function loadSnippetsView() {
 
 function loadStyleView() {
   if (!styleViewImportPromise) {
-    styleViewImportPromise = import('./components/Style');
+    styleViewImportPromise = import('./components/Style').catch((error) => {
+      styleViewImportPromise = null;
+      recoverFromStaleChunk(error);
+    });
   }
 
   return styleViewImportPromise;
@@ -369,6 +396,7 @@ export default function App() {
   const [isStartupUpdateActionPending, setIsStartupUpdateActionPending] = useState(false);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [entitlements, setEntitlements] = useState<EntitlementsPayload | null>(null);
+  const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const appStateRef = useRef<AppState>('idle');
   const settingsRef = useRef<SettingsType | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -1114,6 +1142,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    void window.api.windowIsMaximized?.()
+      .then((maximized) => {
+        if (!cancelled) setIsWindowMaximized(maximized);
+      })
+      .catch(() => undefined);
+    const off = window.api.onWindowMaximizedState?.((maximized) => setIsWindowMaximized(maximized));
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
+
+  useEffect(() => {
     const handleDeviceChange = () => {
       void refreshAudioInputDevices();
       void window.api.refreshTrayMenu().catch(() => undefined);
@@ -1212,10 +1254,11 @@ export default function App() {
           <button
             type="button"
             onClick={() => window.api.windowToggleMaximize()}
-            aria-label="Maximize window"
+            aria-label={isWindowMaximized ? 'Restore window' : 'Maximize window'}
+            title={isWindowMaximized ? 'Restore' : 'Maximize'}
             className="flex h-10 w-11 items-center justify-center rounded-lg text-foreground/58 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
           >
-            <Square size={15} />
+            {isWindowMaximized ? <Copy size={14} className="-scale-x-100" /> : <Square size={15} />}
           </button>
           <button
             type="button"
@@ -1384,7 +1427,10 @@ export default function App() {
         <div className="flex min-w-0 flex-1 flex-col pt-10 pr-0">
         <main className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[24px] border border-border bg-popover shadow-[0_18px_60px_-44px_rgba(15,23,42,0.42)]">
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            <div className="absolute inset-0">
+            {/* Scrolls for the block-content tabs (Dictionary, Shortcuts,
+                Style); Dashboard and Notepad are h-full and own their own
+                scroll regions, so this never engages for them. */}
+            <div className="scroll-hover absolute inset-0 overflow-y-auto">
               {activeTab === 'dashboard' && <DashboardView settings={settings} />}
               <Suspense fallback={<MainPanelSkeleton />}>
                 {activeTab === 'history' && <HistoryView />}

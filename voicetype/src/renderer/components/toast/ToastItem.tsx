@@ -71,10 +71,10 @@ export default function ToastItem({ id, type, message, duration, onDismiss }: To
   // Bare-stroke icon set, sized 18 px with stroke-width 2.5.
   const iconColor =
     type === 'success'
-      ? '#788C5D' // Claude Moss Green
+      ? 'var(--toast-icon-success, #788C5D)'
       : type === 'error'
-      ? '#D97757' // Claude Terracotta
-      : '#6C6B65'; // Claude Slate Ink
+      ? 'var(--toast-icon-error, #D97757)'
+      : 'var(--toast-icon-info, #6C6B65)';
   const Icon = type === 'success' ? Check : type === 'error' ? X : Info;
 
   // Spring transitions copied from `ui/dialog.tsx` so the toast pop

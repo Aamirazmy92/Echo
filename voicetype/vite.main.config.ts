@@ -3,10 +3,9 @@ import { defineConfig } from 'vite';
 // Modules that physically cannot be inlined into the main-process bundle
 // and must remain runtime `require()`s:
 //   - `electron` itself (provided by the Electron runtime).
-//   - Native addons that load `.node` binaries from disk. These are
-//     unpacked from app.asar by `@electron-forge/plugin-auto-unpack-natives`
-//     and copied into the staged build by the `packageAfterCopy` hook in
-//     forge.config.ts (because the Forge Vite plugin wipes node_modules).
+//   - Native addons that load `.node` binaries from disk. electron-builder
+//     copies these runtime modules into the app and unpacks their native
+//     binaries according to electron-builder.config.cjs.
 const NATIVE_OR_RUNTIME_EXTERNALS = [
   'electron',
   'better-sqlite3',
@@ -15,21 +14,14 @@ const NATIVE_OR_RUNTIME_EXTERNALS = [
   'sharp',
 ];
 
-export default defineConfig(({ command }) => ({
-  // Only inject these constants when the standalone `vite build` runs
-  // (i.e. the electron-builder / NSIS pipeline). In Forge dev mode
-  // (`npm start` → `vite serve`) the Forge Vite plugin injects the
-  // real dev server URL at runtime — we must NOT override it to
-  // `undefined` there, or main.js would fall into the production
-  // branch and try to `loadFile` a renderer that hasn't been built.
-  ...(command === 'build'
-    ? {
-        define: {
-          MAIN_WINDOW_VITE_DEV_SERVER_URL: 'undefined',
-          MAIN_WINDOW_VITE_NAME: JSON.stringify('main_window'),
-        },
-      }
-    : {}),
+export default defineConfig(() => ({
+  // The direct Vite/electron-builder flow always loads the built renderer
+  // files. Keep these constants explicit so the main process never depends
+  // on dev-server globals injected by a packaging plugin.
+  define: {
+    MAIN_WINDOW_VITE_DEV_SERVER_URL: 'undefined',
+    MAIN_WINDOW_VITE_NAME: JSON.stringify('main_window'),
+  },
   build: {
     ssr: true,
     outDir: '.vite/build',
@@ -46,12 +38,9 @@ export default defineConfig(({ command }) => ({
       },
     },
   },
-  // Force every other dependency to be bundled into main.js. The Forge
-  // Vite plugin does NOT ship `node_modules` into `app.asar`, so anything
-  // left external (other than the native modules above) will throw
-  // "Cannot find module ..." at runtime. `noExternal: true` makes Vite
-  // inline `electron-updater`, `electron-store`, and all of their
-  // transitive deps.
+  // Force every other dependency to be bundled into main.js. Anything left
+  // external (other than the native/runtime modules above) would need to be
+  // shipped separately. `noExternal: true` keeps pure-JS dependencies inline.
   ssr: {
     noExternal: true,
     external: NATIVE_OR_RUNTIME_EXTERNALS,

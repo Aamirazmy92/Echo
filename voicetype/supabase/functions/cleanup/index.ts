@@ -20,6 +20,15 @@ import { getEntitlements, requirePro, logUsage } from '../_shared/entitlements.t
 import { resolveGroqApiKey } from '../_shared/groq.ts';
 
 const GROQ_CHAT_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const DEFAULT_MODEL = 'llama-3.1-8b-instant';
+const ALLOWED_MODELS = new Set([
+  'llama-3.1-8b-instant',
+  'llama-3.3-70b-versatile',
+]);
+const MAX_SYSTEM_PROMPT_CHARS = 8_000;
+const MAX_USER_PROMPT_CHARS = 24_000;
+const MAX_TOKENS = 2_048;
+const MAX_CLEANUP_CALLS_WHEN_REMAINING_ZERO = 0;
 
 interface CleanupRequest {
   model: string;
@@ -48,11 +57,27 @@ Deno.serve(async (req: Request) => {
     const groqApiKey = resolveGroqApiKey(user, ent, 'cleanup');
 
     const body = await req.json() as Partial<CleanupRequest>;
-    if (typeof body.model !== 'string' || !body.model.trim()) {
-      throw new HttpError(400, 'missing_model', 'model is required.');
-    }
     if (typeof body.systemPrompt !== 'string' || typeof body.userPrompt !== 'string') {
       throw new HttpError(400, 'missing_prompts', 'systemPrompt and userPrompt are required.');
+    }
+    if (body.systemPrompt.length > MAX_SYSTEM_PROMPT_CHARS || body.userPrompt.length > MAX_USER_PROMPT_CHARS) {
+      throw new HttpError(413, 'prompt_too_large', 'Cleanup prompt is too large.');
+    }
+
+    const model = typeof body.model === 'string' && ALLOWED_MODELS.has(body.model)
+      ? body.model
+      : DEFAULT_MODEL;
+    const temperature = typeof body.temperature === 'number' && Number.isFinite(body.temperature)
+      ? Math.min(1, Math.max(0, body.temperature))
+      : 0.1;
+    const maxTokens = typeof body.maxTokens === 'number' && Number.isFinite(body.maxTokens)
+      ? Math.min(MAX_TOKENS, Math.max(1, Math.trunc(body.maxTokens)))
+      : 1024;
+    if (ent.fairUseRemainingSeconds === MAX_CLEANUP_CALLS_WHEN_REMAINING_ZERO && ent.status !== 'developer' && ent.status !== 'admin') {
+      return jsonResponse(
+        { error: 'fair_use_exceeded', message: 'You have hit the Pro fair-use cap for this 30-day window.' },
+        { status: 429 },
+      );
     }
 
     const groqRes = await fetch(GROQ_CHAT_URL, {
@@ -62,9 +87,9 @@ Deno.serve(async (req: Request) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: body.model,
-        temperature: typeof body.temperature === 'number' ? body.temperature : 0.1,
-        max_tokens: typeof body.maxTokens === 'number' ? body.maxTokens : 1024,
+        model,
+        temperature,
+        max_tokens: maxTokens,
         messages: [
           { role: 'system', content: body.systemPrompt },
           { role: 'user',   content: body.userPrompt },

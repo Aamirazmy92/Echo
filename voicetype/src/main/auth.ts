@@ -1,6 +1,7 @@
 import { app, BrowserWindow, safeStorage, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { createClient, SupabaseClient, Session, AuthChangeEvent } from '@supabase/supabase-js';
 import { logError, logInfo, logWarn } from './logger';
 
@@ -37,6 +38,8 @@ let intentionalSignOut = false;
 let ensureSessionPromise: Promise<Session | null> | null = null;
 const sessionListeners = new Set<(session: Session | null) => void>();
 const NETWORK_AUTH_ERROR = 'Network error. Check your internet connection and try again.';
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+let pendingOAuthState: { value: string; expiresAt: number } | null = null;
 
 function isNetworkError(error: unknown): boolean {
   if (!error) return false;
@@ -59,6 +62,51 @@ function authErrorMessage(error: unknown): string {
 
 function sessionFilePath(): string {
   return path.join(app.getPath('userData'), 'auth-session.json');
+}
+
+function sameCallbackTarget(left: URL, right: URL): boolean {
+  return (
+    left.protocol === right.protocol &&
+    left.hostname === right.hostname &&
+    left.port === right.port &&
+    left.pathname.replace(/\/+$/, '') === right.pathname.replace(/\/+$/, '')
+  );
+}
+
+export function isExpectedOAuthCallbackUrl(callbackUrl: string): boolean {
+  try {
+    return sameCallbackTarget(new URL(callbackUrl), new URL(SUPABASE_REDIRECT_URL));
+  } catch {
+    return false;
+  }
+}
+
+function buildOAuthRedirectUrl(state: string): string {
+  const redirect = new URL(SUPABASE_REDIRECT_URL);
+  redirect.searchParams.set('echo_oauth_state', state);
+  return redirect.toString();
+}
+
+function consumePendingOAuthState(callbackUrl: URL): boolean {
+  const expected = pendingOAuthState;
+  pendingOAuthState = null;
+
+  if (!expected) {
+    logWarn('auth', 'rejected OAuth callback with no locally initiated sign-in');
+    return false;
+  }
+  if (Date.now() > expected.expiresAt) {
+    logWarn('auth', 'rejected expired OAuth callback');
+    return false;
+  }
+
+  const actual = callbackUrl.searchParams.get('echo_oauth_state');
+  if (!actual || actual !== expected.value) {
+    logWarn('auth', 'rejected OAuth callback with invalid state');
+    return false;
+  }
+
+  return true;
 }
 
 // On disk, the session payload is wrapped in this envelope so we can tell
@@ -523,24 +571,34 @@ export async function sendPasswordReset(email: string): Promise<{ error?: string
 export async function startGoogleSignIn(): Promise<{ error?: string }> {
   if (!supabase) return { error: 'Cloud sync not configured.' };
   let url: string | undefined;
+  const oauthState = crypto.randomBytes(24).toString('base64url');
+  pendingOAuthState = {
+    value: oauthState,
+    expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
+  };
   try {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: SUPABASE_REDIRECT_URL,
+        redirectTo: buildOAuthRedirectUrl(oauthState),
         // Skip the browser-side redirect — we'll open the URL ourselves.
         skipBrowserRedirect: true,
       },
     });
     if (error || !data?.url) {
+      pendingOAuthState = null;
       return { error: error ? authErrorMessage(error) : 'Could not start Google sign-in.' };
     }
     url = data.url;
   } catch (err) {
+    pendingOAuthState = null;
     logWarn('auth', 'google sign in request failed', err);
     return { error: authErrorMessage(err) };
   }
-  if (!url) return { error: 'Could not start Google sign-in.' };
+  if (!url) {
+    pendingOAuthState = null;
+    return { error: 'Could not start Google sign-in.' };
+  }
   await shell.openExternal(url);
   return {};
 }
@@ -554,6 +612,13 @@ export async function completeOAuthCallback(callbackUrl: string): Promise<void> 
   if (!supabase) return;
   try {
     const url = new URL(callbackUrl);
+    if (!isExpectedOAuthCallbackUrl(callbackUrl)) {
+      logWarn('auth', `rejected unexpected OAuth callback URL: ${callbackUrl}`);
+      return;
+    }
+    if (!consumePendingOAuthState(url)) {
+      return;
+    }
 
     // Supabase can hand us the OAuth result in two shapes:
     //

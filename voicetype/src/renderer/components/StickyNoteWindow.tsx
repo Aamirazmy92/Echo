@@ -1,7 +1,10 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
+import { LockKeyhole } from 'lucide-react';
+import type { Note } from '../../shared/types';
 import { noteHtmlToPlainText, sanitizeNoteHtml } from '../lib/noteRichText';
 import { toast } from './toast/useToast';
+import NoteLockModal from './NoteLockModal';
 import Titlebar from './sticky/Titlebar';
 import Sidebar from './sticky/Sidebar';
 import Editor from './sticky/Editor';
@@ -65,7 +68,6 @@ function StickyNoteWindowInner() {
 
   const tabsApi = useNoteTabs(initialNoteId);
   const {
-    initialTabId,
     tabs,
     activeTab,
     activeTabId,
@@ -86,6 +88,7 @@ function StickyNoteWindowInner() {
     notes,
     setNotes,
     saveStatus,
+    bodyDraftsRef,
   } = tabsApi;
 
   const tabBarRef = useRef<HTMLDivElement | null>(null);
@@ -161,6 +164,11 @@ function StickyNoteWindowInner() {
   const [openNoteMenuId, setOpenNoteMenuId] = useState<number | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [lockDialog, setLockDialog] = useState<{
+    note: Note;
+    mode: 'setup' | 'unlock' | 'remove';
+  } | null>(null);
+  const [lockError, setLockError] = useState<string | null>(null);
 
   useEffect(() => {
     if (openNoteMenuId === null) return;
@@ -242,6 +250,85 @@ function StickyNoteWindowInner() {
       }
     },
     [notes, setNotes],
+  );
+
+  const mergeUpdatedNote = useCallback(
+    (updated: Note) => {
+      setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)));
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.noteId !== updated.id) return tab;
+          bodyDraftsRef.current[tab.clientId] = updated.body;
+          return {
+            ...tab,
+            title: updated.title || 'Untitled',
+            body: updated.body,
+            locked: updated.locked,
+            lockUnlocked: updated.lockUnlocked,
+          };
+        }),
+      );
+    },
+    [bodyDraftsRef, setNotes, setTabs],
+  );
+
+  const openLockDialog = useCallback((note: Note, mode: 'setup' | 'unlock' | 'remove') => {
+    setOpenNoteMenuId(null);
+    setLockError(null);
+    setLockDialog({ note, mode });
+  }, []);
+
+  const handleRelockNote = useCallback(
+    async (note: Note) => {
+      try {
+        const updated = await window.api.relockNote(note.id);
+        if (updated) mergeUpdatedNote(updated);
+        toast.success('Note locked');
+      } catch {
+        toast.error('Could not lock note.');
+      }
+    },
+    [mergeUpdatedNote],
+  );
+
+  const handleLockDialogSubmit = useCallback(
+    async (code: string) => {
+      if (!lockDialog) return;
+      setLockError(null);
+      try {
+        if (lockDialog.mode === 'setup') {
+          const updated = await window.api.lockNote(lockDialog.note.id, code);
+          mergeUpdatedNote(updated);
+          setLockDialog(null);
+          toast.success('Note locked');
+          return;
+        }
+
+        if (lockDialog.mode === 'unlock') {
+          const result = await window.api.unlockNote(lockDialog.note.id, code);
+          if (!result.ok) {
+            setLockError('Incorrect code.');
+            return;
+          }
+          mergeUpdatedNote(result.note);
+          setLockDialog(null);
+          return;
+        }
+
+        const unlock = await window.api.unlockNote(lockDialog.note.id, code);
+        if (!unlock.ok) {
+          setLockError('Incorrect code.');
+          return;
+        }
+        const updated = await window.api.removeNoteLock(lockDialog.note.id);
+        mergeUpdatedNote(updated);
+        setLockDialog(null);
+        toast.success('Lock removed');
+      } catch (error) {
+        setLockError(error instanceof Error ? error.message : 'Could not update note lock.');
+      }
+    },
+    [lockDialog, mergeUpdatedNote],
   );
 
   const performDeleteNote = useCallback(
@@ -365,6 +452,10 @@ function StickyNoteWindowInner() {
           onCommitRename={commitNoteRename}
           openNoteMenuId={openNoteMenuId}
           setOpenNoteMenuId={setOpenNoteMenuId}
+          onLockNote={(note) => openLockDialog(note, 'setup')}
+          onUnlockNote={(note) => openLockDialog(note, 'unlock')}
+          onRelockNote={(note) => void handleRelockNote(note)}
+          onRemoveNoteLock={(note) => openLockDialog(note, 'remove')}
         />
 
         <EditorErrorBoundary
@@ -422,6 +513,18 @@ function StickyNoteWindowInner() {
           </div>
         </div>
       )}
+
+      <NoteLockModal
+        open={lockDialog !== null}
+        mode={lockDialog?.mode ?? 'unlock'}
+        noteTitle={lockDialog?.note.title ?? ''}
+        error={lockError}
+        onSubmit={handleLockDialogSubmit}
+        onClose={() => {
+          setLockDialog(null);
+          setLockError(null);
+        }}
+      />
     </div>
   );
 }

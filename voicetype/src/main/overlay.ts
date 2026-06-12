@@ -1,4 +1,4 @@
-import { BrowserWindow, screen, ipcMain } from 'electron';
+import { BrowserWindow, screen, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import path from 'path';
 import { getSettings } from './store';
 import { logWarn } from './logger';
@@ -215,34 +215,45 @@ function registerOverlayIpc() {
   if (ipcRegistered) return;
   ipcRegistered = true;
 
-  ipcMain.on('overlay-mouse-enter', () => {
+  const isOverlaySender = (event: IpcMainEvent | IpcMainInvokeEvent): boolean =>
+    !!overlayWindow &&
+    !overlayWindow.isDestroyed() &&
+    event.sender.id === overlayWindow.webContents.id;
+
+  ipcMain.on('overlay-mouse-enter', (event) => {
+    if (!isOverlaySender(event)) return;
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.setIgnoreMouseEvents(false);
     }
   });
-  ipcMain.on('overlay-mouse-leave', () => {
+  ipcMain.on('overlay-mouse-leave', (event) => {
+    if (!isOverlaySender(event)) return;
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.setIgnoreMouseEvents(true, { forward: true });
     }
   });
-  ipcMain.handle('get-overlay-state', () => ({
-    state: currentOverlayState,
-    extraData: currentOverlayExtraData,
-  }));
+  ipcMain.handle('get-overlay-state', (event) => {
+    if (!isOverlaySender(event)) throw new Error('Untrusted overlay IPC sender.');
+    return {
+      state: currentOverlayState,
+      extraData: currentOverlayExtraData,
+    };
+  });
   ipcMain.on('overlay-render-ready', (event) => {
-    if (!overlayWindow || overlayWindow.isDestroyed()) return;
-    if (event.sender.id !== overlayWindow.webContents.id) return;
+    if (!isOverlaySender(event)) return;
+    const currentWindow = overlayWindow;
+    if (!currentWindow || currentWindow.isDestroyed()) return;
 
     overlayHasRenderedFrame = true;
     clearOverlayRecoveryTimer();
-    overlayWindow.webContents.setBackgroundThrottling(currentOverlayState === 'idle');
+    currentWindow.webContents.setBackgroundThrottling(currentOverlayState === 'idle');
     flushOverlayReady(true);
 
     if (overlayDisplayAllowed && shouldShowOverlay()) {
       ensureOverlayVisible();
-    } else if (overlayWindow.isVisible()) {
+    } else if (currentWindow.isVisible()) {
       stopOverlayDisplayTracking();
-      overlayWindow.hide();
+      currentWindow.hide();
     }
   });
 }

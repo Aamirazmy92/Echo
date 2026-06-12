@@ -72,6 +72,10 @@ export interface EchoApi {
   saveNote: (note: NoteInput) => Promise<Note>;
   deleteNote: (id: number) => Promise<void>;
   toggleNotePin: (id: number, pinned: boolean) => Promise<Note>;
+  lockNote: (id: number, code: string) => Promise<Note>;
+  unlockNote: (id: number, code: string) => Promise<{ ok: true; note: Note } | { ok: false }>;
+  relockNote: (id: number) => Promise<Note | null>;
+  removeNoteLock: (id: number) => Promise<Note>;
   openStickyNoteWindow: (noteId?: number, options?: { x?: number; y?: number }) => Promise<void>;
   createNewStickyNoteWindow: (
     note?: number | { noteId?: number; title: string; body: string },
@@ -104,12 +108,16 @@ export interface EchoApi {
   getOverlayState: () => Promise<{ state: AppState; extraData?: unknown }>;
   windowMinimize: () => void;
   windowToggleMaximize: () => void;
+  windowIsMaximized: () => Promise<boolean>;
+  onWindowMaximizedState: (cb: (maximized: boolean) => void) => () => void;
   windowClose: () => void;
   closeCurrentWindow: () => void;
   forceCloseCurrentWindow: () => void;
   toggleCurrentWindowMaximize: () => void;
   expandCurrentWindowForWriting: () => void;
   onNotesUpdated: (cb: () => void) => () => void;
+  onSyncedDataUpdated: (cb: (payload: { tables: string[] }) => void) => () => void;
+  onLocalDataCleared: (cb: () => void) => () => void;
   onOpenNoteInSticky: (cb: (note: Note) => void) => () => void;
   onNewBlankTabInSticky: (cb: () => void) => () => void;
   onAttachNoteInSticky: (cb: (note: { noteId?: number; title: string; body: string; keepAsNewTab?: boolean }) => void) => () => void;

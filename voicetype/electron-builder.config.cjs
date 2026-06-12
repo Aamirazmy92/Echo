@@ -4,6 +4,8 @@ const path = require('path');
 const projectRoot = __dirname;
 const iconPath = path.join(projectRoot, 'assets', 'icon.ico');
 const bundledModelPath = path.join(projectRoot, 'vendor', 'whispercpp', 'ggml-base.bin');
+const signingCertPath = (process.env.SIGNING_CERT_PATH || '').trim();
+const signingCertPassword = process.env.SIGNING_CERT_PASSWORD || '';
 
 const extraResources = [
   {
@@ -29,6 +31,10 @@ module.exports = {
   copyright: 'Copyright © 2026 Aamir Azmi',
   directories: {
     output: 'dist',
+  },
+  npmRebuild: false,
+  electronDownload: {
+    cache: path.join(projectRoot, '.electron-cache'),
   },
   toolsets: {
     winCodeSign: '1.1.0',
@@ -71,6 +77,8 @@ module.exports = {
       },
     ],
     ...(fs.existsSync(iconPath) ? { icon: 'assets/icon.ico' } : {}),
+    ...(signingCertPath ? { certificateFile: signingCertPath } : {}),
+    ...(signingCertPassword ? { certificatePassword: signingCertPassword } : {}),
     artifactName: 'Echo-Setup-${version}.${ext}',
   },
   nsis: {

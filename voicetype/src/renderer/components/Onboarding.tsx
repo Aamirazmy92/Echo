@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, ArrowLeft, ArrowRight, Check, Pencil } from 'lucide-react';
-import { Settings } from '../../shared/types';
+import { GlobalStyleId, Settings } from '../../shared/types';
+import { GLOBAL_STYLE_CONFIG } from '../../shared/styleConfig';
 import {
   DEFAULT_PUSH_TO_TALK_HOTKEY,
   DEFAULT_TOGGLE_HOTKEY,
@@ -9,6 +10,7 @@ import {
   normalizeHotkeyAccelerator,
 } from '../../shared/hotkey';
 import { fadeTransition } from '../lib/motion';
+import { useMicTest } from '../lib/useMicTest';
 
 interface OnboardingProps {
   settings: Settings;
@@ -23,6 +25,18 @@ interface OnboardingProps {
 const STEPS = ['welcome', 'shortcut', 'microphone', 'tone', 'ready'] as const;
 
 type StepId = (typeof STEPS)[number];
+
+// The welcome and ready screens don't count as setup steps, so the
+// "Step X of N" kicker only covers the middle configuration steps.
+const SETUP_STEP_COUNT = STEPS.length - 2;
+
+const ONBOARDING_TONE_IDS: GlobalStyleId[] = ['formal', 'casual', 'very_casual'];
+
+const TONE_SUBTITLES: Partial<Record<GlobalStyleId, string>> = {
+  formal: 'Polished',
+  casual: 'Balanced',
+  very_casual: 'Lowercase',
+};
 
 function HotkeyTokens({ label, subdued = false }: { label: string; subdued?: boolean }) {
   const tokens = label.split('+').map((t) => t.trim()).filter(Boolean);
@@ -57,34 +71,54 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
     index: number;
   } | null>(null);
   const [tested, setTested] = useState(false);
-  const [recordingPulse, setRecordingPulse] = useState(false);
+  const [selectedTone, setSelectedTone] = useState<GlobalStyleId>(
+    settings.selectedGlobalStyleId ?? 'casual'
+  );
 
   const stepId: StepId = STEPS[stepIndex];
   const isLast = stepIndex === STEPS.length - 1;
 
-  const goNext = useCallback(() => {
-    if (isLast) {
+  // Real microphone test — the hook tears the session down automatically
+  // when we leave the microphone step.
+  const micTest = useMicTest(stepId === 'microphone');
+  const micTesting = micTest.isTestingDevice(selectedMic);
+  const micLevel = micTesting ? Math.max(...micTest.bars, 0) : 0;
+
+  useEffect(() => {
+    if (micTesting && micLevel > 0.18 && !tested) setTested(true);
+  }, [micTesting, micLevel, tested]);
+
+  const completeOnboarding = useCallback(
+    (updates: Partial<Settings>) => {
       if (captureTarget) {
-        window.api.resumeHotkey();
+        void window.api.resumeHotkey();
         setCaptureTarget(null);
       }
-      onComplete({
+      onComplete(updates);
+    },
+    [captureTarget, onComplete]
+  );
+
+  const goNext = useCallback(() => {
+    if (isLast) {
+      completeOnboarding({
         onboardingComplete: true,
         microphoneId: selectedMic,
         microphoneLabel: selectedMicLabel,
         pushToTalkHotkey,
         toggleHotkey,
+        selectedGlobalStyleId: selectedTone,
       });
     } else {
       setStepIndex((s) => s + 1);
     }
   }, [
-    captureTarget,
+    completeOnboarding,
     isLast,
-    onComplete,
     pushToTalkHotkey,
     selectedMic,
     selectedMicLabel,
+    selectedTone,
     toggleHotkey,
   ]);
 
@@ -195,7 +229,7 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
         <button
           type="button"
           className="echo-btn echo-btn-ghost"
-          onClick={() => onComplete({ onboardingComplete: true })}
+          onClick={() => completeOnboarding({ onboardingComplete: true })}
         >
           Skip setup
         </button>
@@ -250,7 +284,7 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
             {stepId === 'shortcut' && (
               <div style={{ maxWidth: 600, width: '100%' }}>
                 <div className="echo-h-section" style={{ marginBottom: 16, textAlign: 'center' }}>
-                  Step 1 of 3 · Choose your shortcut
+                  Step {stepIndex} of {SETUP_STEP_COUNT} · Choose your shortcut
                 </div>
                 <h1 className="echo-h-display" style={{ textAlign: 'center' }}>
                   Pick a key to hold while you speak.
@@ -305,7 +339,7 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
             {stepId === 'microphone' && (
               <div style={{ maxWidth: 540, width: '100%' }}>
                 <div className="echo-h-section" style={{ marginBottom: 16, textAlign: 'center' }}>
-                  Step 2 of 3 · Choose your microphone
+                  Step {stepIndex} of {SETUP_STEP_COUNT} · Choose your microphone
                 </div>
                 <h1 className="echo-h-display" style={{ textAlign: 'center' }}>
                   Which mic should Echo listen on?
@@ -349,54 +383,74 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
                   ))}
                 </div>
 
-                <div
-                  onClick={() => {
-                    if (recordingPulse) return;
-                    setRecordingPulse(true);
-                    window.setTimeout(() => {
-                      setRecordingPulse(false);
-                      setTested(true);
-                    }, 1500);
-                  }}
+                <button
+                  type="button"
+                  onClick={() => void micTest.toggleDeviceTest(selectedMic)}
                   style={{
                     margin: '22px auto 0',
                     width: 120,
                     height: 120,
                     borderRadius: '50%',
-                    background: recordingPulse
+                    background: micTesting
                       ? 'radial-gradient(circle at 30% 25%, #E4886A, #C96442 65%)'
                       : 'var(--card-raw)',
-                    border: recordingPulse ? 'none' : '1px dashed var(--line-strong)',
-                    color: recordingPulse ? 'var(--ivory)' : 'var(--ink-soft)',
+                    border: micTesting ? 'none' : '1px dashed var(--line-strong)',
+                    color: micTesting ? 'var(--ivory)' : 'var(--ink-soft)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    gap: 3,
                     cursor: 'pointer',
-                    boxShadow: recordingPulse
-                      ? '0 16px 40px -8px rgba(201,100,66,0.55)'
+                    font: 'inherit',
+                    boxShadow: micTesting
+                      ? `0 16px 40px -8px rgba(201,100,66,${0.35 + micLevel * 0.4})`
                       : 'none',
-                    transition: 'all 200ms ease',
+                    transition: 'background 200ms ease, box-shadow 120ms ease',
                   }}
-                  role="button"
-                  aria-label="Tap to test microphone"
+                  aria-label={micTesting ? 'Stop microphone test' : 'Test microphone'}
+                  aria-pressed={micTesting}
                 >
-                  <Mic size={32} />
-                </div>
+                  {micTesting ? (
+                    micTest.bars.map((level, i) => (
+                      <span
+                        key={i}
+                        style={{
+                          width: 4,
+                          height: 8 + Math.min(1, level) * 30,
+                          borderRadius: 2,
+                          background: 'var(--ivory)',
+                          transition: 'height 80ms ease',
+                        }}
+                      />
+                    ))
+                  ) : (
+                    <Mic size={32} />
+                  )}
+                </button>
 
                 <div
                   style={{
                     marginTop: 10,
                     fontSize: 13,
-                    color: tested ? 'var(--moss)' : 'var(--ink-muted)',
+                    color: micTest.error
+                      ? 'var(--destructive, #b3422f)'
+                      : tested
+                        ? 'var(--moss)'
+                        : 'var(--ink-muted)',
                     textAlign: 'center',
                     height: 20,
                   }}
+                  role="status"
                 >
-                  {recordingPulse
-                    ? 'Listening…'
-                    : tested
-                      ? '✓ Sounds great. Mic calibrated.'
-                      : 'Tap the mic to test'}
+                  {micTest.error
+                    ? micTest.error
+                    : micTesting
+                      ? tested
+                        ? '✓ Sounds great. Tap again to stop.'
+                        : 'Listening… say something'
+                      : tested
+                        ? '✓ Mic check passed.'
+                        : 'Tap the mic to test'}
                 </div>
               </div>
             )}
@@ -404,7 +458,7 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
             {stepId === 'tone' && (
               <div style={{ maxWidth: 760, width: '100%' }}>
                 <div className="echo-h-section" style={{ marginBottom: 16, textAlign: 'center' }}>
-                  Step 3 of 3 · Pick a tone
+                  Step {stepIndex} of {SETUP_STEP_COUNT} · Pick a tone
                 </div>
                 <h1 className="echo-h-display" style={{ textAlign: 'center' }}>
                   How should it sound when you talk?
@@ -418,6 +472,8 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
                 </p>
 
                 <div
+                  role="radiogroup"
+                  aria-label="Writing tone"
                   style={{
                     display: 'grid',
                     gridTemplateColumns: 'repeat(3, 1fr)',
@@ -425,22 +481,27 @@ export default function Onboarding({ settings, devices, onComplete }: Onboarding
                     width: '100%',
                   }}
                 >
-                  {[
-                    { id: 'formal', name: 'Formal', sub: 'Polished' },
-                    { id: 'casual', name: 'Casual', sub: 'Balanced' },
-                    { id: 'very_casual', name: 'Very casual', sub: 'Lowercase' },
-                  ].map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      className="echo-tone-card"
-                      style={{ textAlign: 'left', cursor: 'pointer', font: 'inherit' }}
-                    >
-                      <div className="radio" aria-hidden="true" />
-                      <div className="name">{t.name}</div>
-                      <div className="sub" style={{ marginBottom: 0 }}>{t.sub}</div>
-                    </button>
-                  ))}
+                  {ONBOARDING_TONE_IDS.map((toneId) => {
+                    const tone = GLOBAL_STYLE_CONFIG[toneId];
+                    const selected = selectedTone === toneId;
+                    return (
+                      <button
+                        key={toneId}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => setSelectedTone(toneId)}
+                        className={`echo-tone-card ${selected ? 'selected' : ''}`}
+                        style={{ textAlign: 'left', cursor: 'pointer', font: 'inherit' }}
+                      >
+                        <div className="radio" aria-hidden="true" />
+                        <div className="name">{tone.label}</div>
+                        <div className="sub" style={{ marginBottom: 0 }}>
+                          {TONE_SUBTITLES[toneId] ?? tone.subtitle}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
 
                 <div

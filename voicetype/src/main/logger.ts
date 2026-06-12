@@ -19,6 +19,12 @@ import path from 'path';
  * the console so devs see output in the terminal.
  */
 
+// Swallow EPIPE errors on the std streams: after a dev self-relaunch the
+// inherited pipes are dead, and an unhandled 'error' event would crash the
+// main process before the uncaught-exception logger can even run.
+process.stdout?.on('error', () => { /* no-op */ });
+process.stderr?.on('error', () => { /* no-op */ });
+
 const LOG_FILE_NAME = 'dictation.log';
 const LOG_MAX_BYTES = 1_000_000; // 1 MB before rotation
 const ROTATED_SUFFIX = '.1';
@@ -111,7 +117,13 @@ function emit(level: Level, scope: string, message: string, error?: unknown): vo
     const consoleFn = level === 'error'
       ? console.error
       : level === 'warn' ? console.warn : console.log;
-    consoleFn(line.trimEnd());
+    try {
+      consoleFn(line.trimEnd());
+    } catch {
+      // After a dev self-relaunch the inherited stdout/stderr pipe is dead
+      // and console writes throw EPIPE. The file log below is the source
+      // of truth; never let the mirror crash the process.
+    }
   }
 
   void appendToFile(line);

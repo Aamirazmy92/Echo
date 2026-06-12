@@ -25,6 +25,7 @@ const MAX_DICTIONARY_PHRASE_LENGTH = 160;
 const MAX_DICTIONARY_MISSPELLING_LENGTH = 160;
 const MAX_NOTE_TITLE_LENGTH = 200;
 const MAX_NOTE_BODY_LENGTH = 50_000;
+const NOTE_LOCK_CODE_PATTERN = /^\d{4,6}$/;
 
 type PlainObject = Record<string, unknown>;
 
@@ -389,4 +390,12 @@ export function sanitizeNoteInputPayload(value: unknown): NoteInput {
     title: sanitizeOptionalTrimmedString(value.title, 'title', MAX_NOTE_TITLE_LENGTH) ?? '',
     body: sanitizeTrimmedString(value.body, 'body', MAX_NOTE_BODY_LENGTH, { allowEmpty: true }),
   };
+}
+
+export function sanitizeNoteLockCode(value: unknown): string {
+  const code = sanitizeTrimmedString(value, 'lock code', 6, { allowEmpty: true });
+  if (!NOTE_LOCK_CODE_PATTERN.test(code)) {
+    throw new Error('Lock code must be 4-6 digits.');
+  }
+  return code;
 }
