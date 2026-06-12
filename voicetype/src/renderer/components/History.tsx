@@ -210,7 +210,7 @@ export default function HistoryView() {
           className="flex items-start justify-between gap-6"
         >
           <div style={{ maxWidth: 560 }}>
-            <h1 className="echo-h-display">Personal dictionary</h1>
+            <h1 className="echo-h-page">Personal dictionary</h1>
             <p className="echo-lede" style={{ marginTop: 12, marginBottom: 0 }}>
               Teach Echo the words that matter to you — names, product terms, spellings.
               Echo quietly corrects them while you talk.

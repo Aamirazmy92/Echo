@@ -60,7 +60,7 @@ export default function StyleView() {
     <div className="echo-pane-inner">
       {/* Page header */}
       <div className="echo-style-head">
-        <h1 className="echo-h-display">Writing style</h1>
+        <h1 className="echo-h-page">Writing style</h1>
         <p className="echo-lede">
           Pick a tone for your dictations. Echo polishes every transcript so it sounds the way you
           write — in chats, docs, emails, anywhere.

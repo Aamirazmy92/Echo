@@ -2246,15 +2246,6 @@ select {
   position: relative;
   overflow: hidden;
 }
-.echo-style-preview::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--tone-accent);
-}
 .echo-style-preview-head {
   display: flex;
   align-items: center;
@@ -2389,6 +2380,18 @@ select {
   font-size: 20px;
   line-height: 1.2;
   letter-spacing: -0.014em;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+}
+
+/* Page-level title — sans per the warm-minimal contract (serif is reserved
+   for the home greeting, stat numerals, and empty-state headlines). */
+.echo-h-page {
+  font-family: var(--font-body);
+  font-size: 23px;
+  line-height: 1.15;
+  letter-spacing: -0.018em;
   font-weight: 600;
   color: var(--ink);
   margin: 0;

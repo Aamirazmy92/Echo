@@ -198,7 +198,7 @@ export default function SnippetsView() {
       <div style={{ marginBottom: 28 }}>
         <div className="flex items-start justify-between gap-6">
           <div style={{ maxWidth: 560 }}>
-            <h1 className="echo-h-display">Shortcuts</h1>
+            <h1 className="echo-h-page">Shortcuts</h1>
             <p className="echo-lede" style={{ marginTop: 12, marginBottom: 0 }}>
               Save snippets you dictate often — emails, links, bios, addresses. Say the
               keyword and Echo expands it in place.
