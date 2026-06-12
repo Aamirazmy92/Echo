@@ -65,6 +65,12 @@ Replace MediaRecorder-as-source-of-truth with a continuous **AudioWorklet** capt
 - New unit tests: weekly usage counter (rollover, increment, recompute-on-delete), incremental resampler, ring-buffer pre-roll snapshot.
 - Per-phase manual end-to-end dictation check on the real app (cloud and local paths), including the exhausted-cap block on recording start.
 
+## Implementation deviations (recorded 2026-06-12)
+
+- **Downsampling is one-pass at stop, not incremental.** With raw PCM already in memory (no container decode), a single downsample pass over even a 30 s clip costs ~10–20 ms — incremental chunk-wise resampling added statefulness for no measurable gain.
+- **Cloud upload stays WAV; Opus deferred.** The `/transcribe` edge function derives billing duration from the WAV header (`getWavDurationSeconds`) for fair-use integrity. Switching to Opus requires a server-side duration validation strategy for WebM/Ogg first. Noted as future work.
+- **Edge function not yet deployed.** The combined transcribe+cleanup function is committed but `npx supabase functions deploy transcribe` requires explicit operator action. Until deployed, clients silently use the two-step path.
+
 ## Out of scope
 
 Streaming/partial transcription during recording, replacing the PowerShell hotkey/inject helpers, per-app profiles, UI redesign.
