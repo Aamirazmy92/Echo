@@ -124,12 +124,20 @@ export async function openCustomerPortal(): Promise<string> {
 export interface ProxyTranscribeResult {
   text?: string;
   language?: string;
+  cleaned_text?: string;
+}
+
+export interface ProxyCleanupPlan {
+  model: string;
+  systemPrompt: string;
+  temperature: number;
 }
 
 export async function proxyTranscribe(args: {
   wavBuffer: Buffer;
   language: string;
   durationMs: number;
+  cleanup?: ProxyCleanupPlan;
   signal?: AbortSignal;
 }): Promise<ProxyTranscribeResult> {
   const form = new FormData();
@@ -140,6 +148,11 @@ export async function proxyTranscribe(args: {
   form.append('file', new Blob([ab], { type: 'audio/wav' }), 'audio.wav');
   form.append('language', args.language);
   form.append('duration_ms', String(Math.max(0, Math.round(args.durationMs))));
+  if (args.cleanup) {
+    form.append('cleanup_model', args.cleanup.model);
+    form.append('cleanup_system_prompt', args.cleanup.systemPrompt);
+    form.append('cleanup_temperature', String(args.cleanup.temperature));
+  }
 
   return call<ProxyTranscribeResult>('/transcribe', {
     body: form,

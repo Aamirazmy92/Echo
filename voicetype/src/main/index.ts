@@ -885,13 +885,22 @@ function registerAllIpcs() {
       }
 
       const { transcribeAudio } = await transcribeModulePromise;
+      const cleanupModule = await cleanupModulePromise;
+      const resolvedStyle = resolveGlobalStyle(settings);
+      const toneId = resolvedStyle.toneId;
+      // When the dictation routes through the cloud proxy, send the
+      // cleanup request along with the audio so the server runs both
+      // Groq calls in-region — one client round trip instead of two.
+      const cleanupPlan = settings.useCloudTranscription
+        ? cleanupModule.buildCleanupPlan(toneId, settings)
+        : null;
 
       // Retrieve the app name that was captured when recording started
       const appName = getActiveAppName();
 
       // Only await the transcription itself so it returns instantly
       const result = await withTimeout(
-        transcribeAudio(sanitizedAudioBuffer, settings, sanitizedDurationMs, sanitizedSpeechMetrics),
+        transcribeAudio(sanitizedAudioBuffer, settings, sanitizedDurationMs, sanitizedSpeechMetrics, cleanupPlan ?? undefined),
         TRANSCRIPTION_TIMEOUT_MS,
         'Transcription'
       );
@@ -915,17 +924,17 @@ function registerAllIpcs() {
         return;
       }
 
-      // Cleanup + snippet expansion + injection. `cleanupModulePromise` is
-      // already resolved by this point in the common case, so the only real
-      // wait is the LLM call itself.
-      const resolvedStyle = resolveGlobalStyle(settings);
-      const toneId = resolvedStyle.toneId;
-      const cleanupModule = await cleanupModulePromise;
-      const cleaned = await withTimeout(
-        cleanupModule.cleanupText(rawText, toneId, settings, result.detectedLanguage),
-        CLEANUP_TIMEOUT_MS,
-        'Cleanup'
-      );
+      let cleaned: string;
+      if (result.method === 'cloud' && result.cleanedText !== undefined) {
+        // Server ran the cleanup pass inline — no second round trip.
+        cleaned = cleanupModule.finalizeCleanup(rawText, result.cleanedText, toneId);
+      } else {
+        cleaned = await withTimeout(
+          cleanupModule.cleanupText(rawText, toneId, settings, result.detectedLanguage),
+          CLEANUP_TIMEOUT_MS,
+          'Cleanup'
+        );
+      }
       if (isCancelled()) {
         return;
       }

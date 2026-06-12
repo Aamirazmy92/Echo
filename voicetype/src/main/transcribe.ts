@@ -2,6 +2,7 @@ import { Settings, SpeechMetrics } from '../shared/types';
 import { resolveRecognitionLanguage } from '../shared/languages';
 import { transcribeWithLocalModel } from './localTranscribe';
 import { transcribeWithCloudProxy } from './cloudTranscribe';
+import type { ProxyCleanupPlan } from './cloud';
 import { isProUser } from './entitlements';
 import { logWarn } from './logger';
 
@@ -182,6 +183,8 @@ export interface TranscribeResult {
   method: 'cloud' | 'local' | 'local (cloud-fallback)';
   cloudError?: string;
   detectedLanguage?: string;
+  /** Present when the cloud proxy ran the cleanup pass inline. */
+  cleanedText?: string;
 }
 
 // Compute RMS energy directly from the raw waveform — the most reliable silence check
@@ -218,7 +221,8 @@ export async function transcribeAudio(
   audioBuffer: ArrayBuffer,
   settings: Settings,
   durationMs?: number,
-  speechMetrics?: SpeechMetrics
+  speechMetrics?: SpeechMetrics,
+  cleanup?: ProxyCleanupPlan
 ): Promise<TranscribeResult> {
   if (!audioBuffer || audioBuffer.byteLength === 0) {
     return { text: '', method: 'local' };
@@ -239,6 +243,7 @@ export async function transcribeAudio(
     let method: TranscribeResult['method'] = 'local';
     let cloudError: string | undefined;
     let detectedLanguage: string | undefined;
+    let cleanedFromServer: string | undefined;
     const recognitionLanguage = resolveRecognitionLanguage(settings);
 
     // Resolution order:
@@ -253,9 +258,10 @@ export async function transcribeAudio(
 
     if (useProxy) {
       try {
-        const cloudResult = await transcribeWithCloudProxy(audioBuffer, recognitionLanguage);
+        const cloudResult = await transcribeWithCloudProxy(audioBuffer, recognitionLanguage, cleanup);
         raw = cloudResult.text;
         detectedLanguage = cloudResult.detectedLanguage;
+        cleanedFromServer = cloudResult.cleanedText;
         method = 'cloud';
       } catch (err: unknown) {
         const cloudFailure = err as { message?: unknown; status?: unknown; type?: unknown };
@@ -270,6 +276,8 @@ export async function transcribeAudio(
 
     const text = removeTranscriptArtifacts(raw);
 
+    // Empty/phantom transcripts return WITHOUT cleanedText so empty
+    // dictations stay empty regardless of what the cleanup pass produced.
     if (!text || !hasMeaningfulTranscriptContent(text)) {
       return { text: '', method, cloudError, detectedLanguage };
     }
@@ -279,7 +287,7 @@ export async function transcribeAudio(
       return { text: '', method, cloudError, detectedLanguage };
     }
 
-    return { text, method, cloudError, detectedLanguage };
+    return { text, method, cloudError, detectedLanguage, cleanedText: cleanedFromServer };
   } catch (error: unknown) {
     throw new Error('Transcription failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
   }

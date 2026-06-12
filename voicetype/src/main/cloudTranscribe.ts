@@ -1,5 +1,5 @@
 import { resolveCloudLanguage } from '../shared/languages';
-import { proxyTranscribe } from './cloud';
+import { proxyTranscribe, type ProxyCleanupPlan } from './cloud';
 
 const CLOUD_TIMEOUT_MS = 15_000;
 
@@ -53,7 +53,8 @@ function audioBufferToWaveform(audioBuffer: ArrayBuffer): Float32Array | null {
 export async function transcribeWithCloudProxy(
   audioBuffer: ArrayBuffer,
   language: string,
-): Promise<{ text: string; detectedLanguage?: string }> {
+  cleanup?: ProxyCleanupPlan,
+): Promise<{ text: string; detectedLanguage?: string; cleanedText?: string }> {
   const waveform = audioBufferToWaveform(audioBuffer);
   if (!waveform || !waveform.length) return { text: '' };
 
@@ -68,11 +69,13 @@ export async function transcribeWithCloudProxy(
       wavBuffer,
       language: langCode,
       durationMs,
+      cleanup,
       signal: controller.signal,
     });
     return {
       text: String(result.text ?? '').replace(/\s+/g, ' ').trim(),
       detectedLanguage: typeof result.language === 'string' ? result.language.trim() : undefined,
+      cleanedText: typeof result.cleaned_text === 'string' ? result.cleaned_text : undefined,
     };
   } finally {
     clearTimeout(timeout);
