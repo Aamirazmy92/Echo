@@ -1366,7 +1366,7 @@ export default function App() {
         </div>
       </motion.div>
 
-      <div className="relative z-[1] flex h-full gap-0 px-2 pb-2">
+      <div className="relative z-[1] flex h-full gap-0 px-2.5 pb-2.5">
         {/* ── Sidebar ── */}
         <motion.div
           className="relative shrink-0 overflow-hidden"
@@ -1520,7 +1520,7 @@ export default function App() {
 
         {/* ── Main Panel ── */}
         <div className="flex min-w-0 flex-1 flex-col pt-10 pr-0">
-        <main className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[24px] border border-border bg-popover shadow-[0_18px_60px_-44px_rgba(15,23,42,0.42)]">
+        <main className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-popover shadow-[0_0_0_1px_rgba(31,27,22,0.04),0_1px_2px_rgba(31,27,22,0.03),0_12px_40px_-24px_rgba(31,27,22,0.16)]">
           <div className="relative min-h-0 flex-1 overflow-hidden">
             {/* Scrolls for the block-content tabs (Dictionary, Shortcuts,
                 Style); Dashboard and Notepad are h-full and own their own
