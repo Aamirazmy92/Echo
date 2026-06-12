@@ -99,6 +99,48 @@ const USER_PROMPT_TEMPLATE = (rawText: string) => `Dictated text to rewrite exac
 ${rawText}
 DICTATION>>>`;
 
+export interface CleanupPlan {
+  model: string;
+  systemPrompt: string;
+  temperature: number;
+}
+
+/**
+ * The request the cloud transcribe call can carry so the server runs the
+ * cleanup pass inline. Returns null when AI cleanup is off. Language
+ * guardrail uses the pre-transcription form (no detected language yet).
+ */
+export function buildCleanupPlan(toneId: GlobalStyleId | null, settings: Settings): CleanupPlan | null {
+  if (!settings.aiCleanup) return null;
+  const config = toneId
+    ? getGlobalStyleConfig(toneId)
+    : {
+        model: 'llama-3.1-8b-instant',
+        prompt:
+          'Rewrite this dictation with light cleanup only. Remove transcription noise and filler words when they are clearly accidental, fix spacing and punctuation, and preserve the original meaning and tone.',
+        temperature: 0.1,
+      };
+  return {
+    model: config.model,
+    systemPrompt: buildSystemPrompt(toneId, config.prompt, settings),
+    temperature: config.temperature,
+  };
+}
+
+/**
+ * Shared post-LLM tail: assistant-reply safety check + tone post-process.
+ * Used both for server-side inline cleanup results and the legacy
+ * two-step path.
+ */
+export function finalizeCleanup(rawText: string, cleanedText: string | null, toneId: GlobalStyleId | null): string {
+  const finalText = cleanedText?.trim() || rawText;
+  if (looksLikeAssistantReply(rawText, finalText)) {
+    console.warn('[cleanup] Discarded assistant-style cleanup response and kept raw dictation.');
+    return postProcessToneOutput(rawText, toneId);
+  }
+  return postProcessToneOutput(finalText, toneId);
+}
+
 export async function cleanupText(
   rawText: string,
   toneId: GlobalStyleId | null,
@@ -150,12 +192,7 @@ export async function cleanupText(
       clearTimeout(timeout);
     }
 
-    const finalText = cleaned || rawText;
-    if (looksLikeAssistantReply(rawText, finalText)) {
-      console.warn('[cleanup] Discarded assistant-style cleanup response and kept raw dictation.');
-      return postProcessToneOutput(rawText, toneId);
-    }
-    return postProcessToneOutput(finalText, toneId);
+    return finalizeCleanup(rawText, cleaned, toneId);
   } catch (error: unknown) {
     console.warn('[cleanup] AI cleanup failed:', error instanceof Error ? error.message : error);
     return postProcessToneOutput(rawText, toneId);

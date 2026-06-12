@@ -14,7 +14,7 @@ vi.mock('./entitlements', () => ({
   isProUser: mocks.isProUser,
 }));
 
-import { cleanupText } from './cleanup';
+import { buildCleanupPlan, cleanupText, finalizeCleanup } from './cleanup';
 
 const settings: Settings = {
   toggleHotkey: ['Control', 'Space'],
@@ -70,5 +70,35 @@ describe('cleanupText routing', () => {
 
     expect(result).toBe('hello there');
     expect(mocks.proxyCleanup).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildCleanupPlan', () => {
+  it('returns null when aiCleanup is disabled', () => {
+    expect(buildCleanupPlan(null, { ...settings, aiCleanup: false })).toBeNull();
+  });
+
+  it('returns model, systemPrompt and temperature for the default tone', () => {
+    const plan = buildCleanupPlan(null, settings);
+    expect(plan).not.toBeNull();
+    expect(plan!.model).toBe('llama-3.1-8b-instant');
+    expect(plan!.systemPrompt).toContain('text rewriter for speech dictation');
+    expect(typeof plan!.temperature).toBe('number');
+  });
+});
+
+describe('finalizeCleanup', () => {
+  it('keeps the cleaned text when it is sane', () => {
+    expect(finalizeCleanup('hello world um', 'Hello world.', null)).toBe('Hello world.');
+  });
+
+  it('falls back to raw text when the model replied like an assistant', () => {
+    expect(
+      finalizeCleanup('please fix the bug', "I don't see any images attached to this conversation", null)
+    ).toBe('please fix the bug');
+  });
+
+  it('falls back to raw text when cleaned text is empty', () => {
+    expect(finalizeCleanup('keep me', '', null)).toBe('keep me');
   });
 });
