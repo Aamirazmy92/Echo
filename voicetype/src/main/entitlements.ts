@@ -189,6 +189,19 @@ export function initEntitlements(): void {
 }
 
 /**
+ * Fire-and-forget refresh used from latency-critical paths (recording
+ * start). Skips the network entirely when the cached snapshot is fresh,
+ * and never throws — callers must not await this on the hot path.
+ */
+export function refreshEntitlementsInBackground(maxAgeMs = 60_000): void {
+  if (current.loading) return;
+  if (Date.now() - current.fetchedAt < maxAgeMs) return;
+  void refreshEntitlements().catch((err) => {
+    logWarn('entitlements', 'background refresh failed', err);
+  });
+}
+
+/**
  * Schedule a few quick refreshes after the user comes back from a
  * Stripe Checkout or Portal flow. Stripe webhooks usually land within
  * 1–5s, but the user is staring at the app waiting for Pro to flip on,

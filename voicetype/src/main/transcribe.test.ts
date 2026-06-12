@@ -79,21 +79,17 @@ describe('transcribeAudio routing', () => {
     });
   });
 
-  it('keeps local dictation working when entitlement refresh fails', async () => {
+  it('routes from the cached entitlement snapshot without a network refresh', async () => {
     mocks.isProUser.mockReturnValue(false);
-    mocks.refreshEntitlements.mockRejectedValue(new Error('refreshEntitlements is not defined'));
     mocks.transcribeWithLocalModel.mockResolvedValue('hello there');
 
     const result = await transcribeAudio(speechBuffer(), settings);
 
     expect(result).toEqual({ text: 'hello there', method: 'local', cloudError: undefined, detectedLanguage: undefined });
-    expect(mocks.refreshEntitlements).toHaveBeenCalledOnce();
+    // Entitlements are refreshed in the background on recording start —
+    // the transcription hot path must never wait on the network.
+    expect(mocks.refreshEntitlements).not.toHaveBeenCalled();
     expect(mocks.transcribeWithLocalModel).toHaveBeenCalledOnce();
-    expect(mocks.logWarn).toHaveBeenCalledWith(
-      'transcribe',
-      'Entitlements refresh failed before routing, continuing with cached state',
-      expect.any(Error),
-    );
   });
 
   it('routes Pro users through the cloud proxy without a Groq key when Cloud mode is selected', async () => {
@@ -202,7 +198,7 @@ describe('transcribeAudio routing', () => {
       cloudError: undefined,
       detectedLanguage: undefined,
     });
-    expect(mocks.refreshEntitlements).toHaveBeenCalledOnce();
+    expect(mocks.refreshEntitlements).not.toHaveBeenCalled();
     expect(mocks.transcribeWithCloudProxy).not.toHaveBeenCalled();
     expect(mocks.transcribeWithLocalModel).toHaveBeenCalledOnce();
   });

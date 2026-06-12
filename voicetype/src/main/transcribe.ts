@@ -2,7 +2,7 @@ import { Settings, SpeechMetrics } from '../shared/types';
 import { resolveRecognitionLanguage } from '../shared/languages';
 import { transcribeWithLocalModel } from './localTranscribe';
 import { transcribeWithCloudProxy } from './cloudTranscribe';
-import { isProUser, refreshEntitlements } from './entitlements';
+import { isProUser } from './entitlements';
 import { logWarn } from './logger';
 
 const SILENCE_FRAME_THRESHOLD = 5;
@@ -114,17 +114,6 @@ export function removeTranscriptArtifacts(text: string): string {
 
 export function hasMeaningfulTranscriptContent(text: string): boolean {
   return /[\p{L}\p{N}]/u.test(text);
-}
-
-async function refreshEntitlementsForRouting(): Promise<void> {
-  if (isProUser()) return;
-
-  try {
-    await refreshEntitlements();
-  } catch (err) {
-    // Entitlements affect cloud routing only; local dictation must keep working.
-    logWarn('transcribe', 'Entitlements refresh failed before routing, continuing with cached state', err);
-  }
 }
 
 const WHISPER_PHANTOMS = new Set([
@@ -257,8 +246,9 @@ export async function transcribeAudio(
     //   2. Local Whisper model. Free users cannot bring their own Groq key;
     //      Cloud is unlocked only by Pro/developer entitlements.
     // Step 1 falls back to local on any cloud failure so dictation
-    // never silently disappears.
-    await refreshEntitlementsForRouting();
+    // never silently disappears. Routing uses the cached entitlement
+    // snapshot — it is refreshed in the background when recording starts,
+    // never awaited here on the hot path.
     const useProxy = settings.useCloudTranscription && isProUser();
 
     if (useProxy) {
