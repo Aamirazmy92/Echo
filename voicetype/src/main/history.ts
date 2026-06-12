@@ -138,6 +138,7 @@ export function initHistory() {
       method TEXT NOT NULL DEFAULT 'local',
       created_at TEXT NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS idx_dictations_created_at ON dictations(created_at);
 
     CREATE TABLE IF NOT EXISTS snippets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -483,6 +484,19 @@ export function getStats(): { totalWords: number; totalSessions: number; todayWo
     todayWords: todayRow?.w || 0,
     avgSessionMs: totalRow?.a || 0
   };
+}
+
+/**
+ * Sum of word_count for non-deleted dictations created at or after
+ * `sinceIso` (UTC ISO string). Replaces the previous pattern of
+ * materializing every row via getAllEntries() just to count words —
+ * this is an indexed aggregate and runs in well under a millisecond.
+ */
+export function getWeeklyWordCount(sinceIso: string): number {
+  const row = db
+    .prepare('SELECT COALESCE(SUM(word_count), 0) AS total FROM dictations WHERE deleted_at IS NULL AND created_at >= ?')
+    .get(sinceIso) as { total: number };
+  return row.total;
 }
 
 function mapSnippetRow(row: SnippetRow): Snippet {
