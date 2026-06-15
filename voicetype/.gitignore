@@ -19,3 +19,6 @@ supabase/.temp/
 
 # Agent tooling profile — may contain API keys. Never commit.
 .openclaude-profile.json
+
+# UI-driver scratch output (logs, screenshots, command transcripts).
+.ui-driver/

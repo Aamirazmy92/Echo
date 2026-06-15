@@ -24,3 +24,8 @@ Thumbs.db
 
 # Stray logs at the workspace root
 *.log
+
+# Stray npm cruft from running npm at the workspace root (the app lives in
+# voicetype/ and has its own package.json). These are not the project manifest.
+/package.json
+/package-lock.json

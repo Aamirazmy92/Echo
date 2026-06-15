@@ -1448,9 +1448,10 @@ export default function App() {
               })}
             </nav>
 
-            {/* Account/settings — pinned to bottom, matches the bundle's
-                user-chip cream pill when expanded; collapses to a single
-                avatar+cog tap target when the sidebar is compact. */}
+            {/* Account/settings — pinned to bottom. Expanded: an outlined
+                user chip (avatar · identity · cog). Compact: collapses to the
+                avatar alone, centered with the nav icons, still opening
+                settings. */}
             <div className="mt-3 w-full shrink-0">
               {!isSidebarCompact ? (
                 <motion.div
@@ -1461,43 +1462,45 @@ export default function App() {
                   animate={{ opacity: 1 }}
                   transition={SIDEBAR_CONTENT_FADE}
                 >
-                  <div className="name">{sidebarDisplayName}</div>
-                  <div className="row">
-                    <span className="avatar">
-                      {authSession?.profilePictureDataUrl ? (
-                        <img
-                          src={authSession.profilePictureDataUrl}
-                          alt=""
-                          draggable={false}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        sidebarInitial
-                      )}
+                  <span className="avatar">
+                    {authSession?.profilePictureDataUrl ? (
+                      <img
+                        src={authSession.profilePictureDataUrl}
+                        alt=""
+                        draggable={false}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      sidebarInitial
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    className="identity"
+                    data-tier={entitlements?.tier === 'pro' ? 'pro' : 'basic'}
+                    onMouseEnter={warmSettingsView}
+                    onFocus={warmSettingsView}
+                    onClick={() => openPlansSettings()}
+                    aria-label="Manage your plan"
+                    title="Manage your plan"
+                  >
+                    <span className="name">{sidebarDisplayName}</span>
+                    <span className="plan-label">
+                      <span className="plan-pill-dot" aria-hidden="true" />
+                      <span className="plan-pill-text">{sidebarPlanLabel}</span>
                     </span>
-                    <button
-                      type="button"
-                      className="plan-pill"
-                      onMouseEnter={warmSettingsView}
-                      onFocus={warmSettingsView}
-                      onClick={() => openPlansSettings()}
-                      aria-label="Manage your plan"
-                      title="Manage your plan"
-                    >
-                      {sidebarPlanLabel}
-                    </button>
-                    <button
-                      type="button"
-                      className="theme-toggle"
-                      onMouseEnter={warmSettingsView}
-                      onFocus={warmSettingsView}
-                      onClick={() => openSettings()}
-                      aria-label="Open settings"
-                      title="Open settings"
-                    >
-                      <SettingsIcon size={15} strokeWidth={1.9} />
-                    </button>
-                  </div>
+                  </button>
+                  <button
+                    type="button"
+                    className="theme-toggle"
+                    onMouseEnter={warmSettingsView}
+                    onFocus={warmSettingsView}
+                    onClick={() => openSettings()}
+                    aria-label="Open settings"
+                    title="Open settings"
+                  >
+                    <SettingsIcon size={15} strokeWidth={1.9} />
+                  </button>
                 </motion.div>
               ) : (
                 <button
@@ -1507,10 +1510,21 @@ export default function App() {
                   onClick={() => openSettings()}
                   aria-label="Open settings"
                   title={`${sidebarDisplayName} · ${sidebarPlanLabel}`}
-                  className="flex h-10 w-10 items-center justify-center rounded-xl"
-                  style={{ color: 'var(--ink-soft)' }}
+                  className="echo-user-chip-compact"
+                  data-tier={entitlements?.tier === 'pro' ? 'pro' : 'basic'}
                 >
-                  <SettingsIcon size={18} strokeWidth={2} />
+                  <span className="avatar">
+                    {authSession?.profilePictureDataUrl ? (
+                      <img
+                        src={authSession.profilePictureDataUrl}
+                        alt=""
+                        draggable={false}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      sidebarInitial
+                    )}
+                  </span>
                 </button>
               )}
             </div>

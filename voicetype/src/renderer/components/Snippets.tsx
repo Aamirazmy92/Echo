@@ -29,18 +29,8 @@ const SORT_LABELS: Record<SortMode, string> = {
   alphabetical: 'Alphabetical',
 };
 
-function normalizeCategory(value: string | null | undefined): string {
-  return (value ?? '').trim();
-}
-
-function categoryDisplay(value: string): string {
-  if (!value) return 'General';
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
 export default function SnippetsView() {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
-  const [activeCategory, setActiveCategory] = useState<string>('__all');
   const [sortMode, setSortMode] = useState<SortMode>('mostUsed');
   const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<SnippetInput & { id?: number }>(emptyDraft);
@@ -79,20 +69,9 @@ export default function SnippetsView() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isModalOpen]);
 
-  const categories = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const item of snippets) {
-      const cat = normalizeCategory(item.category) || 'Personal';
-      counts.set(cat, (counts.get(cat) ?? 0) + 1);
-    }
-    return Array.from(counts.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [snippets]);
-
   const visibleItems = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
     const filtered = snippets.filter((item) => {
-      const cat = normalizeCategory(item.category) || 'Personal';
-      if (activeCategory !== '__all' && cat !== activeCategory) return false;
       if (!normalizedSearch) return true;
 
       const trigger = item.trigger.toLowerCase();
@@ -118,7 +97,7 @@ export default function SnippetsView() {
       const rightTime = Date.parse(right.createdAt || '') || 0;
       return sortMode === 'newest' ? rightTime - leftTime : leftTime - rightTime;
     });
-  }, [snippets, activeCategory, search, sortMode]);
+  }, [snippets, search, sortMode]);
 
   const openCreate = () => {
     setDraft(emptyDraft);
@@ -214,11 +193,11 @@ export default function SnippetsView() {
         </div>
       </div>
 
-      {/* Tabs + Toolbar */}
+      {/* Toolbar */}
       <div
         style={{
           display: 'flex',
-          justifyContent: 'space-between',
+          justifyContent: 'flex-end',
           alignItems: 'center',
           marginTop: 8,
           marginBottom: 16,
@@ -226,26 +205,6 @@ export default function SnippetsView() {
           flexWrap: 'wrap',
         }}
       >
-        <div className="echo-tabs">
-          <button
-            type="button"
-            className={activeCategory === '__all' ? 'active' : ''}
-            onClick={() => setActiveCategory('__all')}
-          >
-            All <span style={{ color: 'var(--ink-muted)', marginLeft: 4 }}>· {snippets.length}</span>
-          </button>
-          {categories.map(([cat, count]) => (
-            <button
-              key={cat}
-              type="button"
-              className={activeCategory === cat ? 'active' : ''}
-              onClick={() => setActiveCategory(cat)}
-            >
-              {categoryDisplay(cat)}{' '}
-              <span style={{ color: 'var(--ink-muted)', marginLeft: 4 }}>· {count}</span>
-            </button>
-          ))}
-        </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <div className="echo-search">
             <Search size={14} style={{ color: 'var(--ink-muted)' }} />

@@ -137,20 +137,25 @@ export default function SidebarStatsNotch() {
 
   return (
     <div className="echo-stat-chip" aria-label="Recent dictation stats">
-      <span className="flame" aria-hidden="true">
-        <Flame size={13} strokeWidth={2} fill="currentColor" />
-      </span>
-      <span>
-        <span className="num">{streakLabel}</span> wk streak
-      </span>
+      <div className="echo-stat-cell is-streak">
+        <span className="num">
+          <span className="flame" aria-hidden="true">
+            <Flame size={14} strokeWidth={2} fill="currentColor" />
+          </span>
+          {streakLabel}
+        </span>
+        <span className="label">wk streak</span>
+      </div>
       <span className="div" aria-hidden="true" />
-      <span>
-        <span className="num">{wordsLabel}</span> words
-      </span>
+      <div className="echo-stat-cell">
+        <span className="num">{wordsLabel}</span>
+        <span className="label">words</span>
+      </div>
       <span className="div" aria-hidden="true" />
-      <span>
-        <span className="num">{wpmLabel}</span> wpm
-      </span>
+      <div className="echo-stat-cell">
+        <span className="num">{wpmLabel}</span>
+        <span className="label">wpm</span>
+      </div>
     </div>
   );
 }

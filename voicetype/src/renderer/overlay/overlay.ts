@@ -53,6 +53,59 @@ function sampleVoiceEnergy(bands: number[], barIndex: number) {
   return previous * 0.2 + current * 0.6 + next * 0.2;
 }
 
+// Soft synthesized cues for recording start/stop. Tones are generated with
+// Web Audio (no asset files) and kept quiet so they read as a gentle tick
+// rather than a notification — and so speaker bleed into the mic stays
+// negligible.
+let audioContext: AudioContext | null = null;
+
+function getAudioContext(): AudioContext | null {
+  try {
+    if (!audioContext) {
+      audioContext = new AudioContext();
+    }
+    if (audioContext.state === 'suspended') {
+      void audioContext.resume();
+    }
+    return audioContext;
+  } catch {
+    return null;
+  }
+}
+
+function playTone(ctx: AudioContext, frequency: number, startTime: number, duration: number, peakGain: number) {
+  const oscillator = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  oscillator.type = 'sine';
+  oscillator.frequency.value = frequency;
+
+  gain.gain.setValueAtTime(0, startTime);
+  gain.gain.linearRampToValueAtTime(peakGain, startTime + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+  oscillator.connect(gain);
+  gain.connect(ctx.destination);
+  oscillator.start(startTime);
+  oscillator.stop(startTime + duration + 0.05);
+}
+
+function playStartCue() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  playTone(ctx, 587.33, now, 0.16, 0.05); // D5
+  playTone(ctx, 880, now + 0.085, 0.2, 0.05); // A5
+}
+
+function playStopCue() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  playTone(ctx, 880, now, 0.16, 0.045); // A5
+  playTone(ctx, 587.33, now + 0.085, 0.22, 0.045); // D5
+}
+
 const root = document.getElementById('root');
 
 if (!root) {
@@ -169,7 +222,13 @@ function applyMode() {
 }
 
 api.onOverlayState((nextState: AppState) => {
+  const wasRecording = state === 'recording';
   state = nextState;
+  if (!wasRecording && nextState === 'recording') {
+    playStartCue();
+  } else if (wasRecording && nextState !== 'recording') {
+    playStopCue();
+  }
   applyMode();
 });
 

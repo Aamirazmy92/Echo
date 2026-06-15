@@ -21,16 +21,17 @@ A Windows-only voice dictation app. Hold a hotkey, speak, and the transcript is 
 
 ```powershell
 npm install
-npm start
+npm run dev
 ```
 
-`npm start` runs the dev supervisor which restarts the Electron main/preload bundles when those files change. The renderer hot-reloads without a restart.
+`npm run dev` runs the dev supervisor (`scripts/dev.cjs`): it watches `src/`, the Vite/Tailwind configs, and `index.html`, then rebuilds the bundles and relaunches the whole app on any change (saves are debounced). Use `npm start` instead when you just want a single build-and-launch with no watching.
 
 Useful scripts:
 
 | Command | What it does |
 | --- | --- |
-| `npm start` | Build the Vite bundles and launch Electron locally. |
+| `npm run dev` | Watch sources and auto-rebuild + relaunch Electron on every change. |
+| `npm start` | Build the Vite bundles and launch Electron once (no watching). |
 | `npm run typecheck` | TypeScript check, no emit. |
 | `npm run lint` | ESLint over `src/`. |
 | `npm test` | Run the Vitest unit suite. |

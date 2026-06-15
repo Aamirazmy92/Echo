@@ -34,7 +34,10 @@ const OUTLINE_DIV_CLASSES = [
 ];
 
 const BLOCK_TAGS = new Set(['BLOCKQUOTE', 'DIV', 'H1', 'H2', 'H3', 'LI', 'OL', 'P', 'TABLE', 'TR', 'UL']);
-const STRUCTURAL_CONTENT_TAGS = new Set(['A', 'TABLE', 'UL', 'OL', 'BLOCKQUOTE']);
+// Headings count as structural content even while textless so that a freshly
+// created (still empty) heading block isn't treated as an empty editor and
+// wiped by the empty-state normalization in useRichTextEditor.
+const STRUCTURAL_CONTENT_TAGS = new Set(['A', 'TABLE', 'UL', 'OL', 'BLOCKQUOTE', 'H1', 'H2', 'H3']);
 const HTML_ENTITY_PATTERN = /&(?:[a-z][a-z0-9]+|#\d+|#x[\da-f]+);/i;
 
 export function escapeHtml(text: string): string {

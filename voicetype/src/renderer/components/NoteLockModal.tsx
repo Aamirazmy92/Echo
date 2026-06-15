@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import { LockKeyhole } from 'lucide-react';
+import { refreshPointerTargetUnderCursor } from '../lib/pointerSync';
+import ModalOverlayRoot from './ModalOverlayRoot';
+import {
+  MODAL_OVERLAY_FADE,
+  MODAL_PANEL_INITIAL,
+  MODAL_PANEL_OPEN,
+  MODAL_PANEL_EXIT,
+  MODAL_SPRING,
+  MODAL_SPRING_EXIT,
+} from '../lib/modalMotion';
 
 type NoteLockModalMode = 'setup' | 'unlock' | 'remove';
 
@@ -47,8 +59,6 @@ export default function NoteLockModal({
     return 'Enter the code for this locked note.';
   }, [mode]);
 
-  if (!open) return null;
-
   const localError = !CODE_PATTERN.test(code)
     ? 'Use 4-6 digits.'
     : mode === 'setup' && code !== confirmCode
@@ -57,10 +67,25 @@ export default function NoteLockModal({
 
   const canSubmit = !submitting && !localError;
 
-  return (
-    <div className="note-lock-overlay" onClick={onClose}>
-      <form
-        className="note-lock-modal"
+  return createPortal(
+    <AnimatePresence initial={false} onExitComplete={refreshPointerTargetUnderCursor}>
+      {open ? (
+        <ModalOverlayRoot
+          key="note-lock-modal"
+          className="note-lock-overlay"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={MODAL_OVERLAY_FADE}
+          onClick={onClose}
+        >
+      <motion.form
+        className="note-lock-modal transform-gpu"
+        initial={MODAL_PANEL_INITIAL}
+        animate={MODAL_PANEL_OPEN}
+        exit={{ ...MODAL_PANEL_EXIT, transition: MODAL_SPRING_EXIT }}
+        transition={MODAL_SPRING}
+        style={{ willChange: 'opacity, transform' }}
         onClick={(event) => event.stopPropagation()}
         onSubmit={async (event) => {
           event.preventDefault();
@@ -125,7 +150,10 @@ export default function NoteLockModal({
                   : 'Unlock'}
           </button>
         </div>
-      </form>
-    </div>
+      </motion.form>
+        </ModalOverlayRoot>
+      ) : null}
+    </AnimatePresence>,
+    document.body
   );
 }

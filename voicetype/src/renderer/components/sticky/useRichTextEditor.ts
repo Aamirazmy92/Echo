@@ -56,7 +56,9 @@ function isOutlineStructuralElement(element: HTMLElement): boolean {
 }
 
 function isIndentableContentBlock(element: HTMLElement): boolean {
-  return ['P', 'H1', 'H2', 'H3', 'BLOCKQUOTE'].includes(element.tagName);
+  if (element.classList.contains('sticky-indent')) return false;
+  if (isOutlineStructuralElement(element)) return false;
+  return ['P', 'H1', 'H2', 'H3', 'BLOCKQUOTE', 'DIV'].includes(element.tagName);
 }
 
 function getBlockAncestor(node: Node, editor: HTMLElement): HTMLElement | null {
@@ -196,17 +198,32 @@ function getOutlineIndentContext(
 }
 
 function previousOutlineSibling(host: HTMLElement, item: HTMLElement): HTMLElement | null {
-  let previous = item.previousElementSibling;
-  while (previous instanceof HTMLElement) {
-    if (
-      previous.classList.contains('sticky-outline') ||
-      previous.classList.contains('sticky-outline-row') ||
-      isIndentableContentBlock(previous) ||
-      previous.classList.contains('sticky-indent')
-    ) {
-      return previous;
+  let previous: ChildNode | null = item.previousSibling;
+  while (previous) {
+    if (previous.nodeType === Node.TEXT_NODE) {
+      // A bare text node is a valid previous line (the first line typed into
+      // an empty note has no wrapping element). Promote it to a paragraph so
+      // it can host indented children.
+      if ((previous.textContent ?? '').trim()) {
+        const paragraph = document.createElement('p');
+        previous.parentNode?.insertBefore(paragraph, previous);
+        paragraph.appendChild(previous);
+        return paragraph;
+      }
+      previous = previous.previousSibling;
+      continue;
     }
-    previous = previous.previousElementSibling;
+    if (previous instanceof HTMLElement) {
+      if (
+        previous.classList.contains('sticky-outline') ||
+        previous.classList.contains('sticky-outline-row') ||
+        isIndentableContentBlock(previous) ||
+        previous.classList.contains('sticky-indent')
+      ) {
+        return previous;
+      }
+    }
+    previous = previous.previousSibling;
   }
   return null;
 }
@@ -222,12 +239,6 @@ function prepareOutlineParent(previous: HTMLElement): HTMLDivElement {
     return convertOutlineRowToOutline(previous);
   }
 
-  if (isIndentableContentBlock(previous)) {
-    const outline = convertContentBlockToOutline(previous);
-    previous.replaceWith(outline);
-    return outline;
-  }
-
   if (previous.classList.contains('sticky-indent')) {
     const inner = previous.querySelector(':scope > p, :scope > h1, :scope > h2, :scope > h3, :scope > blockquote');
     if (inner instanceof HTMLElement) {
@@ -240,7 +251,15 @@ function prepareOutlineParent(previous: HTMLElement): HTMLDivElement {
     }
   }
 
-  return convertContentBlockToOutline(previous);
+  // Capture the insertion point BEFORE converting: convertContentBlockToOutline
+  // reparents `previous` into the new outline, so replacing/inserting relative
+  // to `previous` afterwards would target the outline's own subtree and throw
+  // HierarchyRequestError (losing the block from the editor).
+  const parent = previous.parentElement;
+  const next = previous.nextSibling;
+  const outline = convertContentBlockToOutline(previous);
+  parent?.insertBefore(outline, next);
+  return outline;
 }
 
 function moveItemIntoOutlineChildren(item: HTMLElement, childrenHost: HTMLDivElement): HTMLElement {
@@ -698,7 +717,24 @@ export function useRichTextEditor(
       if (!editor) return;
       restoreSelection();
       editor.focus();
-      if (editorIsEmpty()) normalizeEmptyEditor();
+      if (editorIsEmpty()) {
+        // `formatBlock` is unreliable in an empty contenteditable, and the
+        // post-command empty-editor normalization would wipe a heading that
+        // holds no text yet. Insert the block explicitly and park the caret
+        // inside it instead (same approach as toggleBlockquote).
+        normalizeEmptyEditor();
+        if (type !== 'p') {
+          insertHtml(`<${type}><br></${type}>`);
+          const block = editor.querySelector(`${type}:last-of-type`);
+          if (block) {
+            placeCaretInNode(block, false);
+            saveSelection();
+          }
+          setActiveBlock(type);
+          scheduleEditorRefocus();
+        }
+        return;
+      }
       if (!getRestoredSelectionRange()) return;
       const current = readCurrentBlock();
       const target: BlockType = current === type && type !== 'p' ? 'p' : type;
@@ -715,6 +751,8 @@ export function useRichTextEditor(
       getRestoredSelectionRange,
       readCurrentBlock,
       restoreSelection,
+      insertHtml,
+      placeCaretInNode,
       saveSelection,
       syncBody,
       refreshActiveFormats,

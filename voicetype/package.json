@@ -8,6 +8,7 @@
   "main": ".vite/build/main.js",
   "scripts": {
     "start": "node scripts/build-bundles.cjs --dev && electron .",
+    "dev": "node scripts/dev.cjs",
     "verify:release-assets": "node scripts/verify-release-assets.cjs",
     "package": "npm run build:bundles && electron-builder --config electron-builder.config.cjs --win dir --x64 --publish never",
     "make": "npm run make:nsis",

@@ -391,7 +391,7 @@ export default function Editor({ editor, title, onTitleChange, meta }: EditorPro
     const q = slashMenu.query.toLowerCase();
     if (!q) return slashCommands;
     return slashCommands.filter(
-      (c) => c.label.toLowerCase().includes(q) || c.keywords.some((k) => k.includes(q)),
+      (c) => c.id.includes(q) || c.label.toLowerCase().includes(q) || c.keywords.some((k) => k.includes(q)),
     );
   }, [slashMenu, slashCommands]);
 

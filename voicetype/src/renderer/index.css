@@ -1867,34 +1867,61 @@ select {
 
 .echo-stat-chip {
   display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
+  align-items: stretch;
+  gap: 4px;
+  padding: 10px 6px;
+  background: var(--card-soft);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(31, 27, 22, 0.03);
   white-space: nowrap;
-  font-size: 13px;
   color: var(--ink-soft);
 }
 
+.echo-stat-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 18px;
+}
+
 .echo-stat-chip .num {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--font-display);
-  font-size: 17px;
+  font-size: 20px;
+  line-height: 1.05;
   font-weight: 500;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
 
+.echo-stat-chip .label {
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
 .echo-stat-chip .div {
   width: 1px;
-  height: 14px;
+  align-self: center;
+  height: 28px;
   background: var(--line);
 }
 
 .echo-stat-chip .flame {
   color: var(--clay);
   display: inline-flex;
+}
+
+.echo-stat-cell.is-streak .num {
+  color: var(--clay);
 }
 
 /* "Press to dictate" CTA card with mic orb */
@@ -2398,33 +2425,6 @@ select {
 }
 
 /* Pill-style segmented tabs ("All · 6", "Personal · 3"). */
-.echo-tabs {
-  display: inline-flex;
-  gap: 4px;
-  background: var(--card-soft);
-  padding: 4px;
-  border-radius: 9px;
-  border: none;
-}
-.echo-tabs button {
-  padding: 6px 14px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--ink-soft);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
-}
-.echo-tabs button:hover { color: var(--ink); }
-.echo-tabs button.active {
-  background: var(--card-raw);
-  color: var(--ink);
-  box-shadow: 0 1px 2px rgba(40, 36, 30, 0.04), 0 1px 1px rgba(40, 36, 30, 0.03);
-}
-
 /* Search input cluster with leading icon (and an optional trailing
    calendar / clear icon slot). */
 .echo-search {
@@ -2681,35 +2681,23 @@ select {
 
 /* User chip at the bottom of the sidebar.
    Two rows: display name above; avatar + plan pill + theme toggle below. */
+/* The whole account summary is one outlined card: avatar · identity · cog. */
 .echo-user-chip {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 10px 8px;
+  padding: 8px 10px;
   border-radius: 12px;
-  background: transparent;
-  border: none;
+  background: var(--card-raw);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 1px 2px rgba(31, 27, 22, 0.04);
   box-sizing: border-box;
 }
-.echo-user-chip .name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--ink);
-  line-height: 1.15;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.echo-user-chip .row {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-  min-height: 36px;
-}
 .echo-user-chip .avatar {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   background: linear-gradient(135deg, #1F1B16 0%, #3A3127 100%);
   color: #F5EFE2;
@@ -2722,35 +2710,70 @@ select {
   overflow: hidden;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.4) inset;
 }
-.echo-user-chip .plan-pill {
+/* Identity block (name over plan) doubles as the "manage plan" hit target. */
+.echo-user-chip .identity {
   flex: 1;
   min-width: 0;
-  min-height: 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
   border-radius: 8px;
-  background: var(--card-raw);
-  border: 1px solid var(--line);
-  color: var(--ink-2);
-  font-size: 12.5px;
-  font-weight: 500;
-  font-family: inherit;
   cursor: pointer;
-  padding: 0 12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+  font-family: inherit;
+  transition: background 120ms ease;
+}
+.echo-user-chip .identity:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.echo-user-chip .name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.15;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+  max-width: 100%;
 }
-.echo-user-chip .plan-pill:hover {
-  border-color: var(--line-strong);
-  color: var(--ink);
+.echo-user-chip .plan-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.1;
+  color: var(--ink-soft);
+  max-width: 100%;
+}
+.echo-user-chip .plan-pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.echo-user-chip .plan-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--line-strong);
+}
+/* Pro tier signals itself with the clay accent + glowing status dot. */
+.echo-user-chip .identity[data-tier='pro'] .plan-label {
+  color: var(--clay);
+}
+.echo-user-chip .identity[data-tier='pro'] .plan-pill-dot {
+  background: var(--clay);
+  box-shadow: 0 0 0 3px rgba(201, 100, 66, 0.16);
 }
 .echo-user-chip .theme-toggle {
-  width: 36px;
-  min-height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
@@ -2765,6 +2788,60 @@ select {
 .echo-user-chip .theme-toggle:hover {
   background: rgba(0, 0, 0, 0.05);
   color: var(--ink);
+}
+
+/* Compact sidebar: the account chip collapses to just the avatar, centered
+   and sized to line up with the 40px nav icon column. */
+.echo-user-chip-compact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: 0 auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+.echo-user-chip-compact:hover {
+  background: var(--hover-neutral);
+}
+.echo-user-chip-compact .avatar {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #1F1B16 0%, #3A3127 100%);
+  color: #F5EFE2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.4) inset;
+  transition: box-shadow 140ms ease;
+}
+.echo-user-chip-compact:hover .avatar {
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.4) inset,
+    0 0 0 2px var(--card-raw), 0 0 0 3px var(--line-strong);
+}
+/* Pro tier keeps a small clay status dot on the avatar even when collapsed. */
+.echo-user-chip-compact[data-tier='pro'] .avatar::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--clay);
+  border: 2px solid var(--sidebar-bg, #F2F0EA);
+  box-shadow: 0 0 0 1px rgba(201, 100, 66, 0.2);
 }
 
 /* Sidebar wordmark "Echo" with the clay dot. */
@@ -2793,13 +2870,13 @@ select {
 button.echo-nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   padding: 8px 11px;
   border-radius: 10px;
-  color: var(--ink-2);
+  color: var(--ink);
   font-family: var(--font-body);
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 14.5px;
+  font-weight: 600;
   letter-spacing: -0.01em;
   cursor: pointer;
   text-align: left;
@@ -2815,14 +2892,14 @@ button.echo-nav-item:hover {
 button.echo-nav-item.active {
   background: #FFFFFF;
   color: var(--ink);
-  font-weight: 500;
   box-shadow: inset 0 0 0 1px rgba(31, 27, 22, 0.05), 0 1px 2px rgba(31, 27, 22, 0.03);
 }
 button.echo-nav-item svg {
-  color: var(--ink-soft);
+  color: var(--ink);
   opacity: 1;
   flex-shrink: 0;
   stroke: currentColor;
+  stroke-width: 2;
 }
 button.echo-nav-item.active svg,
 button.echo-nav-item:hover svg {

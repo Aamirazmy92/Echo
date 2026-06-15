@@ -7,7 +7,6 @@ import { Popover, PopoverContent } from './ui/popover';
 import { toast } from './toast/useToast';
 import { rowActionsClassName } from '../lib/rowActions';
 
-type DictionaryScope = 'all' | 'personal';
 type SortMode = 'newest' | 'oldest' | 'alphabetical';
 type EditorMode = 'create' | 'edit';
 
@@ -48,7 +47,6 @@ function formatRelativeFromNow(ts: number, now: number): string {
 
 export default function HistoryView() {
   const [items, setItems] = useState<DictionaryItem[]>([]);
-  const [scope, setScope] = useState<DictionaryScope>('all');
   const [sortMode, setSortMode] = useState<SortMode>('alphabetical');
   const [search, setSearch] = useState('');
   const [editorMode, setEditorMode] = useState<EditorMode>('create');
@@ -101,7 +99,6 @@ export default function HistoryView() {
   const visibleItems = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
     const filtered = items.filter((item) => {
-      if (scope === 'personal' && item.shared) return false;
       if (!normalizedSearch) return true;
 
       const left = item.misspelling?.toLowerCase() ?? '';
@@ -120,7 +117,7 @@ export default function HistoryView() {
       const rightTime = Date.parse(right.createdAt || '') || 0;
       return sortMode === 'newest' ? rightTime - leftTime : leftTime - rightTime;
     });
-  }, [items, scope, search, sortMode]);
+  }, [items, search, sortMode]);
 
   const openCreate = () => {
     setEditorMode('create');
@@ -200,8 +197,6 @@ export default function HistoryView() {
 
   const isReplacementDraft = draft.editKind === 'replacement' || draft.correctMisspelling;
 
-  const personalCount = items.filter((i) => !i.shared).length;
-
   return (
     <div className="echo-pane-inner static-click-buttons">
       {/* Pane header — serif title + lede, primary action on the right. */}
@@ -226,11 +221,11 @@ export default function HistoryView() {
         </div>
       </div>
 
-      {/* Tabs + Toolbar */}
+      {/* Toolbar */}
       <div
         style={{
           display: 'flex',
-          justifyContent: 'space-between',
+          justifyContent: 'flex-end',
           alignItems: 'center',
           marginTop: 8,
           marginBottom: 16,
@@ -238,22 +233,6 @@ export default function HistoryView() {
           flexWrap: 'wrap',
         }}
       >
-        <div className="echo-tabs">
-          <button
-            type="button"
-            className={scope === 'all' ? 'active' : ''}
-            onClick={() => setScope('all')}
-          >
-            All <span style={{ color: 'var(--ink-muted)', marginLeft: 4 }}>· {items.length}</span>
-          </button>
-          <button
-            type="button"
-            className={scope === 'personal' ? 'active' : ''}
-            onClick={() => setScope('personal')}
-          >
-            Personal <span style={{ color: 'var(--ink-muted)', marginLeft: 4 }}>· {personalCount}</span>
-          </button>
-        </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <div className="echo-search">
             <Search size={14} style={{ color: 'var(--ink-muted)' }} />
